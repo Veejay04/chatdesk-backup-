@@ -3,7 +3,14 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { useAuth } from "./AuthContext";
 import axiosClient from "../lib/axiosClient";
 
-export type ChatMessage = { role: "user" | "assistant"; text: string };
+export type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+  // Only set on assistant messages - identifies the InquiryLog this reply
+  // came from, needed to submit thumbs up/down feedback on it.
+  logId?: number;
+  feedback?: "up" | "down" | null;
+};
 
 export type Office = { office_id: number; name: string };
 
@@ -31,6 +38,7 @@ type ChatContextValue = {
   selectedOffice: Office | null;
   setSelectedOffice: (office: Office | null) => void;
   sendMessage: (text: string) => Promise<void>;
+  submitFeedback: (logId: number, feedback: "up" | "down") => Promise<void>;
   startNewChat: () => void;
   resumeSession: (sessionId: string) => void;
 };
@@ -100,7 +108,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         message: trimmed,
         ...(selectedOffice ? { office: selectedOffice.office_id } : {}),
       });
-      setMessages((prev) => [...prev, { role: "assistant", text: data.reply }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: data.reply, logId: data.log_id, feedback: null },
+      ]);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -108,6 +119,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       ]);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const submitFeedback = async (logId: number, feedback: "up" | "down") => {
+    // Optimistic update - the vote UI shouldn't wait on the network round
+    // trip, and a failure here isn't worth surfacing to the student.
+    setMessages((prev) =>
+      prev.map((m) => (m.logId === logId ? { ...m, feedback } : m))
+    );
+    try {
+      await axiosClient.patch(`/chat/logs/${logId}/feedback/`, { feedback });
+    } catch {
+      // Non-critical - the student's vote just won't be recorded server-side.
     }
   };
 
@@ -154,6 +178,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         selectedOffice,
         setSelectedOffice,
         sendMessage,
+        submitFeedback,
         startNewChat,
         resumeSession,
       }}

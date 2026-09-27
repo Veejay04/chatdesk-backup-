@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from users.permissions import IsOfficeStaff, IsStudent
 
 from .models import InquiryLog
-from .serializers import ChatAskSerializer, InquiryLogSerializer
+from .serializers import ChatAskSerializer, InquiryLogFeedbackSerializer, InquiryLogSerializer
 from .services import classify_message
 
 
@@ -51,6 +51,20 @@ class ChatAskView(APIView):
             return Response(payload, status=status.HTTP_201_CREATED)
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class InquiryLogFeedbackView(generics.UpdateAPIView):
+    """PATCH /api/v1/chat/logs/{log_id}/feedback/ - student only, and only
+    ever on their own logs (get_queryset scopes this, matching the
+    student-ticket-ownership pattern elsewhere: someone else's log_id just
+    404s rather than 403s). The only field accepted is `feedback`."""
+
+    serializer_class = InquiryLogFeedbackSerializer
+    permission_classes = [IsStudent]
+    lookup_url_kwarg = "log_id"
+
+    def get_queryset(self):
+        return InquiryLog.objects.filter(user=self.request.user)
 
 
 class InquiryLogListView(generics.ListAPIView):

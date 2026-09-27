@@ -1,6 +1,7 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Tabs } from "expo-router";
 import { useTheme } from "../../context/ThemeContext";
+import { useTicketBadge } from "../../context/TicketBadgeContext";
 
 // The three destinations a student reaches most often get one-tap access
 // here. Everything else (Settings, Profile, SUS Survey, chat History) stays
@@ -8,6 +9,7 @@ import { useTheme } from "../../context/ThemeContext";
 // aren't frequent enough to earn a permanent tab slot.
 export default function TabsLayout() {
   const { colors } = useTheme();
+  const { unseenCount } = useTicketBadge();
 
   return (
     <Tabs
@@ -41,6 +43,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <MaterialIcons name="confirmation-number" size={size} color={color} />
           ),
+          tabBarBadge: unseenCount > 0 ? unseenCount : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.errorRed },
         }}
       />
       <Tabs.Screen

@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework import generics, permissions, status as http_status
 from rest_framework.response import Response
 
+from notifications.services import send_push_to_users
 from users.permissions import IsOfficeStaff, IsStudent
 
 from .models import Ticket
@@ -103,8 +104,18 @@ class TicketDetailView(generics.RetrieveUpdateAPIView):
         if user.role == user.Role.OFFICE_ADMIN:
             serializer.validated_data.pop("office", None)
         extra = {}
+        is_first_resolution = False
         if serializer.validated_data.get("status") == Ticket.Status.RESOLVED:
             if ticket.resolved_by_id is None:
                 extra["resolved_by"] = self.request.user
+                is_first_resolution = True
             extra["resolved_at"] = timezone.now()
         serializer.save(**extra)
+
+        if is_first_resolution:
+            send_push_to_users(
+                [ticket.user],
+                title="Your ticket has been resolved",
+                body=ticket.issue_description[:100],
+                data={"type": "ticket_resolved", "ticket_id": ticket.ticket_id},
+            )

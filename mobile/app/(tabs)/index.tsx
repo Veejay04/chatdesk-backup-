@@ -1,5 +1,6 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -43,7 +44,8 @@ export default function StudentChatScreen() {
   const { currentUser, logout } = useAuth();
   const { colors, isDark } = useTheme();
   const styles = createStyles(colors);
-  const { messages, isSending, sendMessage, offices, selectedOffice, setSelectedOffice } = useChat();
+  const { messages, isSending, sendMessage, submitFeedback, offices, selectedOffice, setSelectedOffice } =
+    useChat();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -82,6 +84,7 @@ export default function StudentChatScreen() {
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed || isSending) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setMessage("");
     sendMessage(trimmed);
   };
@@ -155,6 +158,7 @@ export default function StudentChatScreen() {
                     <Pressable
                       style={styles.categoryModalOption}
                       onPress={() => {
+                        Haptics.selectionAsync().catch(() => {});
                         setSelectedOffice(item.office_id === null ? null : { office_id: item.office_id, name: item.name });
                         setIsCategoryPickerOpen(false);
                       }}
@@ -207,20 +211,60 @@ export default function StudentChatScreen() {
               showsVerticalScrollIndicator={false}
             >
               {messages.map((item, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.messageBubble,
-                    item.role === "user" ? styles.messageBubbleUser : styles.messageBubbleAssistant,
-                  ]}
-                >
-                  <Text
-                    style={
-                      item.role === "user" ? styles.messageTextUser : styles.messageTextAssistant
-                    }
+                <View key={index}>
+                  <View
+                    style={[
+                      styles.messageBubble,
+                      item.role === "user" ? styles.messageBubbleUser : styles.messageBubbleAssistant,
+                    ]}
                   >
-                    {item.text}
-                  </Text>
+                    <Text
+                      style={
+                        item.role === "user" ? styles.messageTextUser : styles.messageTextAssistant
+                      }
+                    >
+                      {item.text}
+                    </Text>
+                  </View>
+                  {item.role === "assistant" && item.logId ? (
+                    <View style={styles.feedbackRow}>
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          submitFeedback(item.logId!, "up");
+                        }}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Mark this answer as helpful"
+                        accessibilityState={{ selected: item.feedback === "up" }}
+                      >
+                        <MaterialIcons
+                          name={item.feedback === "up" ? "thumb-up" : "thumb-up-off-alt"}
+                          size={16}
+                          color={item.feedback === "up" ? colors.accentText : colors.textMuted}
+                        />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          submitFeedback(item.logId!, "down");
+                        }}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Mark this answer as not helpful"
+                        accessibilityState={{ selected: item.feedback === "down" }}
+                      >
+                        <MaterialIcons
+                          name={item.feedback === "down" ? "thumb-down" : "thumb-down-off-alt"}
+                          size={16}
+                          color={item.feedback === "down" ? colors.errorRed : colors.textMuted}
+                        />
+                      </Pressable>
+                      {item.feedback ? (
+                        <Text style={styles.feedbackThanksText}>Thanks for your feedback</Text>
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               ))}
               {isSending ? (
@@ -237,7 +281,10 @@ export default function StudentChatScreen() {
                 <Pressable
                   key={question}
                   style={({ pressed }) => [styles.suggestionRow, pressed && styles.suggestionRowPressed]}
-                  onPress={() => setMessage(question)}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {});
+                    setMessage(question);
+                  }}
                 >
                   <Text style={styles.suggestionText}>{question}</Text>
                   <MaterialIcons name="chevron-right" size={18} color={colors.white} style={styles.suggestionChevron} />
@@ -252,7 +299,10 @@ export default function StudentChatScreen() {
                 <Pressable
                   key={question}
                   style={({ pressed }) => [styles.phaseChip, pressed && styles.phaseChipPressed]}
-                  onPress={() => sendMessage(question)}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                    sendMessage(question);
+                  }}
                   disabled={isSending}
                 >
                   <Text style={styles.phaseChipText}>{question}</Text>
@@ -464,6 +514,19 @@ const createStyles = (colors: ThemePalette) =>
       color: colors.textPrimary,
       fontFamily: "Montserrat_400Regular",
       fontSize: 15,
+    },
+    feedbackRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 4,
+      marginBottom: 4,
+      paddingLeft: 4,
+    },
+    feedbackThanksText: {
+      fontFamily: "Montserrat_400Regular",
+      fontSize: 12,
+      color: colors.textMuted,
     },
     suggestions: { paddingBottom: 16, gap: 6 },
     suggestionRow: {

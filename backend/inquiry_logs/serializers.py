@@ -13,7 +13,8 @@ class InquiryLogSerializer(serializers.ModelSerializer):
         model = InquiryLog
         fields = [
             "log_id", "user_id", "user_message", "detected_intent",
-            "chatbot_response", "is_escalated", "office", "office_name", "timestamp",
+            "chatbot_response", "is_escalated", "office", "office_name",
+            "feedback", "timestamp",
         ]
         read_only_fields = fields
 
@@ -26,3 +27,12 @@ class ChatAskSerializer(serializers.Serializer):
     office = serializers.PrimaryKeyRelatedField(
         queryset=Office.objects.all(), required=False, allow_null=True
     )
+
+
+class InquiryLogFeedbackSerializer(serializers.ModelSerializer):
+    """PATCH-only, student-facing: the sole field a student can ever touch
+    on one of their own inquiry logs is their thumbs up/down."""
+
+    class Meta:
+        model = InquiryLog
+        fields = ["feedback"]

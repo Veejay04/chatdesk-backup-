@@ -1,9 +1,10 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NavMenu } from "../../components/nav-menu";
+import { SkeletonAnnouncementCard } from "../../components/skeleton";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import axiosClient from "../../lib/axiosClient";
@@ -32,19 +33,29 @@ export default function AnnouncementsScreen() {
   const [announcements, setAnnouncements] = useState<Announcement[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";
 
+  const loadAnnouncements = async () => {
+    try {
+      const { data } = await axiosClient.get("/announcements/");
+      setAnnouncements(data.results ?? data);
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    }
+  };
+
   useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await axiosClient.get("/announcements/");
-        setAnnouncements(data.results ?? data);
-      } catch {
-        setLoadFailed(true);
-      }
-    })();
+    loadAnnouncements();
   }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadAnnouncements();
+    setIsRefreshing(false);
+  };
 
   return (
     <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
@@ -74,15 +85,36 @@ export default function AnnouncementsScreen() {
       </View>
 
       {loadFailed ? (
-        <Text style={styles.centerState}>
-          {"Announcements aren't available yet - please check back soon."}
-        </Text>
+        <ScrollView
+          contentContainerStyle={styles.centerStateContainer}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+        >
+          <Text style={styles.centerState}>
+            {"Announcements aren't available yet - please check back soon."}
+          </Text>
+        </ScrollView>
       ) : announcements === null ? (
-        <ActivityIndicator style={styles.centerState} color={colors.accentText} />
+        <View style={styles.skeletonContainer}>
+          {[0, 1, 2].map((i) => (
+            <SkeletonAnnouncementCard key={i} />
+          ))}
+        </View>
       ) : announcements.length === 0 ? (
-        <Text style={styles.centerState}>No announcements yet.</Text>
+        <ScrollView
+          contentContainerStyle={styles.emptyStateContainer}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+        >
+          <View style={styles.emptyIconCircle}>
+            <MaterialIcons name="campaign" size={32} color={colors.accentText} />
+          </View>
+          <Text style={styles.emptyTitle}>No announcements yet</Text>
+          <Text style={styles.centerState}>Check back later for updates from your offices.</Text>
+        </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={styles.listContent}>
+        <ScrollView
+          contentContainerStyle={styles.listContent}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+        >
           {announcements.map((announcement) => (
             <View key={announcement.announcement_id} style={styles.card}>
               <Text style={styles.cardTitle}>{announcement.title}</Text>
@@ -132,14 +164,32 @@ const createStyles = (colors: ThemePalette) =>
     },
     avatarImage: { width: 30, height: 30 },
     avatarText: { fontFamily: "Montserrat_700Bold", color: colors.accentText, fontSize: 12 },
+    centerStateContainer: { flexGrow: 1, justifyContent: "center" },
     centerState: {
-      marginTop: 40,
+      marginTop: 8,
       textAlign: "center",
       color: colors.textSecondary,
       fontFamily: "Montserrat_400Regular",
       fontSize: 14,
       paddingHorizontal: 24,
     },
+    emptyStateContainer: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
+    emptyIconCircle: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: colors.accent + "1A",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 14,
+    },
+    emptyTitle: {
+      fontFamily: "PlusJakartaSans_700Bold",
+      fontSize: 17,
+      color: colors.textPrimary,
+      marginBottom: 4,
+    },
+    skeletonContainer: { paddingTop: 4 },
     listContent: { paddingHorizontal: 20, paddingBottom: 24, gap: 12 },
     card: {
       borderWidth: 1,

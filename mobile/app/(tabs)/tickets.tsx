@@ -1,11 +1,15 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NavMenu } from "../../components/nav-menu";
+import { SkeletonTicketRow } from "../../components/skeleton";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
+import { useTicketBadge } from "../../context/TicketBadgeContext";
 import axiosClient from "../../lib/axiosClient";
 import type { ThemePalette } from "../../theme/colors";
 
@@ -18,30 +22,75 @@ type Ticket = {
   created_at: string;
 };
 
+const seenTicketsKey = (userId: number) => `chatdesk_seen_resolved_tickets_${userId}`;
+
 export default function TicketsScreen() {
   const { currentUser, logout } = useAuth();
   const { colors } = useTheme();
   const styles = createStyles(colors);
+  const { setUnseenCount } = useTicketBadge();
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewingTicket, setViewingTicket] = useState<Ticket | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";
 
+  const updateBadgeFromTickets = async (rows: Ticket[]) => {
+    if (!currentUser) return;
+    let seenIds: number[] = [];
+    try {
+      const stored = await AsyncStorage.getItem(seenTicketsKey(currentUser.user_id));
+      seenIds = stored ? JSON.parse(stored) : [];
+    } catch {
+      seenIds = [];
+    }
+    const seenSet = new Set(seenIds);
+    const unseen = rows.filter((t) => t.status === "resolved" && !seenSet.has(t.ticket_id)).length;
+    setUnseenCount(unseen);
+  };
+
+  const loadTickets = async () => {
+    try {
+      const { data } = await axiosClient.get("/tickets/", { params: { creator: "me" } });
+      const rows: Ticket[] = data.results ?? data;
+      setTickets(rows);
+      setLoadFailed(false);
+      updateBadgeFromTickets(rows);
+    } catch {
+      setLoadFailed(true);
+    }
+  };
+
   useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await axiosClient.get("/tickets/", { params: { creator: "me" } });
-        setTickets(data.results ?? data);
-      } catch {
-        setLoadFailed(true);
-      }
-    })();
+    loadTickets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleView = (ticket: Ticket) => {
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await loadTickets();
+    setIsRefreshing(false);
+  };
+
+  const handleView = async (ticket: Ticket) => {
+    Haptics.selectionAsync().catch(() => {});
     setViewingTicket(ticket);
+
+    if (!currentUser) return;
+    try {
+      const key = seenTicketsKey(currentUser.user_id);
+      const stored = await AsyncStorage.getItem(key);
+      const seenIds: number[] = stored ? JSON.parse(stored) : [];
+      if (!seenIds.includes(ticket.ticket_id)) {
+        const next = [...seenIds, ticket.ticket_id];
+        await AsyncStorage.setItem(key, JSON.stringify(next));
+        if (tickets) updateBadgeFromTickets(tickets);
+      }
+    } catch {
+      // Badge just won't clear for this ticket until next successful write - non-critical.
+    }
   };
 
   return (
@@ -72,13 +121,36 @@ export default function TicketsScreen() {
       </View>
 
       {loadFailed ? (
-        <Text style={styles.centerState}>
-          {"Tickets aren't available yet - please check back soon."}
-        </Text>
+        <ScrollView
+          contentContainerStyle={styles.centerStateContainer}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+        >
+          <Text style={styles.centerState}>
+            {"Tickets aren't available yet - please check back soon."}
+          </Text>
+        </ScrollView>
       ) : tickets === null ? (
-        <ActivityIndicator style={styles.centerState} color={colors.accentText} />
+        <View>
+          <View style={styles.columnHeaderRow}>
+            <Text style={[styles.columnHeader, styles.labelColumn]} />
+            <Text style={[styles.columnHeader, styles.statusColumn]}>Status</Text>
+            <Text style={[styles.columnHeader, styles.actionColumn]}>Action</Text>
+          </View>
+          {[0, 1, 2, 3].map((i) => (
+            <SkeletonTicketRow key={i} />
+          ))}
+        </View>
       ) : tickets.length === 0 ? (
-        <Text style={styles.centerState}>No tickets yet.</Text>
+        <ScrollView
+          contentContainerStyle={styles.emptyStateContainer}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+        >
+          <View style={styles.emptyIconCircle}>
+            <MaterialIcons name="check-circle-outline" size={36} color={colors.accentText} />
+          </View>
+          <Text style={styles.emptyTitle}>You're all caught up</Text>
+          <Text style={styles.centerState}>Nothing to resolve right now - ask ChatDesk anything to get started.</Text>
+        </ScrollView>
       ) : (
         <>
           <View style={styles.columnHeaderRow}>
@@ -86,7 +158,9 @@ export default function TicketsScreen() {
             <Text style={[styles.columnHeader, styles.statusColumn]}>Status</Text>
             <Text style={[styles.columnHeader, styles.actionColumn]}>Action</Text>
           </View>
-          <ScrollView>
+          <ScrollView
+            refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
+          >
             {tickets.map((ticket) => {
               const isResolved = ticket.status === "resolved";
               return (
@@ -196,13 +270,30 @@ const createStyles = (colors: ThemePalette) =>
     },
     avatarImage: { width: 30, height: 30 },
     avatarText: { fontFamily: "Montserrat_700Bold", color: colors.accentText, fontSize: 12 },
+    centerStateContainer: { flexGrow: 1, justifyContent: "center" },
     centerState: {
-      marginTop: 40,
+      marginTop: 8,
       textAlign: "center",
       color: colors.textSecondary,
       fontFamily: "Montserrat_400Regular",
       fontSize: 14,
       paddingHorizontal: 24,
+    },
+    emptyStateContainer: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
+    emptyIconCircle: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: colors.accent + "1A",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 14,
+    },
+    emptyTitle: {
+      fontFamily: "PlusJakartaSans_700Bold",
+      fontSize: 17,
+      color: colors.textPrimary,
+      marginBottom: 4,
     },
     columnHeaderRow: {
       flexDirection: "row",

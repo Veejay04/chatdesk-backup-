@@ -166,13 +166,14 @@ export default function InquiryLogs() {
               <th className="px-5 py-3">Intent</th>
               <th className="px-5 py-3">Office</th>
               <th className="px-5 py-3">Escalated</th>
+              <th className="px-5 py-3">Feedback</th>
               <th className="px-5 py-3 text-right">Timestamp</th>
             </tr>
           </thead>
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-5 py-14 text-center text-sm text-gray-500">
+                <td colSpan={7} className="px-5 py-14 text-center text-sm text-gray-500">
                   No logs match your filters.
                 </td>
               </tr>
@@ -208,6 +209,19 @@ export default function InquiryLogs() {
                     >
                       {log.is_escalated ? "Yes" : "No"}
                     </span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {log.feedback === "up" ? (
+                      <span className="whitespace-nowrap rounded-full bg-status-resolved/15 px-2.5 py-0.5 text-xs font-medium text-status-resolved">
+                        👍 Helpful
+                      </span>
+                    ) : log.feedback === "down" ? (
+                      <span className="whitespace-nowrap rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-600">
+                        👎 Not helpful
+                      </span>
+                    ) : (
+                      <span className="italic text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="px-5 py-3.5 text-right text-gray-500">
                     {new Date(log.timestamp).toLocaleString()}

@@ -3,6 +3,10 @@ from django.db import models
 
 
 class InquiryLog(models.Model):
+    class Feedback(models.TextChoices):
+        UP = "up", "Helpful"
+        DOWN = "down", "Not helpful"
+
     log_id = models.BigAutoField(primary_key=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="inquiry_logs"
@@ -18,6 +22,11 @@ class InquiryLog(models.Model):
     detected_intent = models.CharField(max_length=100)
     chatbot_response = models.TextField()
     is_escalated = models.BooleanField(default=False)
+    # Student's thumbs up/down on the bot's reply - null until they vote.
+    # Only meaningful for non-escalated replies (an escalated log's
+    # chatbot_response is the generic "I've created a ticket" message, not
+    # an actual answer to rate).
+    feedback = models.CharField(max_length=4, choices=Feedback.choices, null=True, blank=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:

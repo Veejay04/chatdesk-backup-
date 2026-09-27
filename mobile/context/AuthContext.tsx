@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import axiosClient from "../lib/axiosClient";
+import { registerForPushNotificationsAsync } from "../lib/pushNotifications";
 import { clearTokens, getAccessToken, getRefreshToken, saveTokens } from "../lib/tokenStorage";
 
 export type ChatDeskUser = {
@@ -89,6 +90,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateCurrentUser = (partial: Partial<ChatDeskUser>) => {
     setCurrentUser((prev) => (prev ? { ...prev, ...partial } : prev));
   };
+
+  // Registers (or re-registers) this device for push once a student is
+  // known to be logged in - covers login, register, and restoring a
+  // session on app start alike, in one place.
+  useEffect(() => {
+    if (currentUser) {
+      registerForPushNotificationsAsync();
+    }
+  }, [currentUser?.user_id]);
 
   return (
     <AuthContext.Provider
