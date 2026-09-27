@@ -1,7 +1,6 @@
 import { Montserrat_400Regular, Montserrat_700Bold } from "@expo-google-fonts/montserrat";
 import { useFonts, PlusJakartaSans_700Bold } from "@expo-google-fonts/plus-jakarta-sans";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Notifications from "expo-notifications";
 import { router, Stack, usePathname } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
@@ -15,20 +14,6 @@ import { TicketBadgeProvider } from "../context/TicketBadgeContext";
 function RootNavigator() {
   const { currentUser, isLoading } = useAuth();
   const pathname = usePathname();
-
-  // Tapping a push notification (app backgrounded or killed) routes to the
-  // relevant tab instead of just opening to whatever screen was last open.
-  useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as { type?: string } | undefined;
-      if (data?.type === "ticket_resolved") {
-        router.push("/tickets");
-      } else if (data?.type === "announcement") {
-        router.push("/announcements");
-      }
-    });
-    return () => subscription.remove();
-  }, []);
 
   useEffect(() => {
     if (isLoading) return;

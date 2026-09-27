@@ -34,7 +34,6 @@ INSTALLED_APPS = [
     "announcements",
     "phases",
     "offices",
-    "notifications",
 ]
 
 MIDDLEWARE = [
