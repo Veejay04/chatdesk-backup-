@@ -1,6 +1,7 @@
 from django.shortcuts import render
 
 # Create your views here.
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, permissions, status as http_status
 from rest_framework.response import Response
@@ -18,7 +19,7 @@ class TicketListCreateView(generics.ListCreateAPIView):
                             routed to their own office only (?status=,
                             ?category=, ?search=; ?office= is ignored).
                             student: own tickets only. ?search= matches
-                            issue_description. Paginated.
+                            issue_description or title. Paginated.
     POST /api/v1/tickets/ - student only, manual creation bypassing the AI.
     """
 
@@ -38,7 +39,7 @@ class TicketListCreateView(generics.ListCreateAPIView):
             if office_param:
                 qs = qs.filter(office_id=office_param)
             if search:
-                qs = qs.filter(issue_description__icontains=search)
+                qs = qs.filter(Q(issue_description__icontains=search) | Q(title__icontains=search))
             return qs
 
         if user.role == user.Role.OFFICE_ADMIN:
@@ -48,7 +49,7 @@ class TicketListCreateView(generics.ListCreateAPIView):
             if category_param:
                 qs = qs.filter(subject_category=category_param)
             if search:
-                qs = qs.filter(issue_description__icontains=search)
+                qs = qs.filter(Q(issue_description__icontains=search) | Q(title__icontains=search))
             return qs
 
         # Students always see only their own tickets - ownership is enforced

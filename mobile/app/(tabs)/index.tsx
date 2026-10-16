@@ -1,14 +1,15 @@
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   Keyboard,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,9 +26,8 @@ import { useTheme } from "../../context/ThemeContext";
 import axiosClient from "../../lib/axiosClient";
 import { colors as brandColors, type ThemePalette } from "../../theme/colors";
 
-// Matches the FAQ categories already modeled on the backend
-// (Enrollment, Scholarship, Clearance, Discipline, General).
-const SUGGESTED_QUESTIONS = [
+// Only shown when the backend has no FAQs to suggest yet.
+const FALLBACK_SUGGESTED_QUESTIONS = [
   "How do I apply for a scholarship?",
   "What are the enrollment requirements?",
   "How do I get my clearance signed?",
@@ -52,6 +52,8 @@ export default function StudentChatScreen() {
   const [phase, setPhase] = useState<Phase | null>(null);
   const [isPhaseBannerDismissed, setIsPhaseBannerDismissed] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>(FALLBACK_SUGGESTED_QUESTIONS);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";
   const hasActivePhase = phase !== null && phase.phase_id !== null && phase.name !== null;
@@ -66,6 +68,29 @@ export default function StudentChatScreen() {
       }
     })();
   }, []);
+
+  // Refetched every time the welcome screen is shown (tab focus, "New chat",
+  // office change) since the tab stays mounted and the ranking shifts as
+  // students keep asking.
+  const isChatEmpty = messages.length === 0;
+  const selectedOfficeId = selectedOffice?.office_id;
+  useFocusEffect(
+    useCallback(() => {
+      if (!isChatEmpty) return;
+      (async () => {
+        try {
+          const { data } = await axiosClient.get<{ faq_id: number; question_text: string }[]>("/faqs/popular/", {
+            params: selectedOfficeId ? { office: selectedOfficeId } : {},
+          });
+          setSuggestedQuestions(
+            data.length > 0 ? data.map((faq) => faq.question_text) : FALLBACK_SUGGESTED_QUESTIONS
+          );
+        } catch {
+          setSuggestedQuestions(FALLBACK_SUGGESTED_QUESTIONS);
+        }
+      })();
+    }, [isChatEmpty, selectedOfficeId])
+  );
 
   // Not KeyboardAvoidingView - its automatic height/padding measurement is
   // unreliable once this screen lives inside expo-router's Tabs navigator
@@ -206,9 +231,14 @@ export default function StudentChatScreen() {
             </View>
           ) : (
             <ScrollView
+              ref={scrollViewRef}
               style={styles.messageList}
               contentContainerStyle={styles.messageListContent}
               showsVerticalScrollIndicator={false}
+              onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+              // Fires when the keyboard (or a growing input) shrinks the
+              // visible area - content size alone doesn't change then.
+              onLayout={() => scrollViewRef.current?.scrollToEnd({ animated: false })}
             >
               {messages.map((item, index) => (
                 <View key={index}>
@@ -226,7 +256,25 @@ export default function StudentChatScreen() {
                       {item.text}
                     </Text>
                   </View>
-                  {item.role === "assistant" && item.logId ? (
+                  {item.role === "assistant" && item.ticketId ? (
+                    <View style={styles.ticketRow}>
+                      <Text style={styles.ticketRowLabel} numberOfLines={2}>
+                        {item.ticketTitle ?? "General Inquiry"} — Ticket #{item.ticketId}
+                      </Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.viewTicketButton, pressed && styles.viewTicketButtonPressed]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          router.push({ pathname: "/tickets", params: { ticketId: String(item.ticketId) } });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View ticket number ${item.ticketId}`}
+                      >
+                        <MaterialIcons name="confirmation-number" size={15} color={colors.white} />
+                        <Text style={styles.viewTicketButtonText}>View Ticket</Text>
+                      </Pressable>
+                    </View>
+                  ) : item.role === "assistant" && item.logId ? (
                     <View style={styles.feedbackRow}>
                       <Pressable
                         onPress={() => {
@@ -265,6 +313,25 @@ export default function StudentChatScreen() {
                       ) : null}
                     </View>
                   ) : null}
+                  {/* Only on the latest reply - older suggestions are stale once the student moves on. */}
+                  {item.suggestions && index === messages.length - 1 && !isSending ? (
+                    <View style={[styles.phaseChipsRow, styles.clarifyChipsRow]}>
+                      {item.suggestions.map((question) => (
+                        <Pressable
+                          key={question}
+                          style={({ pressed }) => [styles.phaseChip, pressed && styles.phaseChipPressed]}
+                          onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                            sendMessage(question);
+                          }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Ask: ${question}`}
+                        >
+                          <Text style={styles.phaseChipText}>{question}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
               ))}
               {isSending ? (
@@ -277,7 +344,7 @@ export default function StudentChatScreen() {
 
           {messages.length === 0 ? (
             <View style={styles.suggestions}>
-              {SUGGESTED_QUESTIONS.map((question) => (
+              {suggestedQuestions.map((question) => (
                 <Pressable
                   key={question}
                   style={({ pressed }) => [styles.suggestionRow, pressed && styles.suggestionRowPressed]}
@@ -293,7 +360,7 @@ export default function StudentChatScreen() {
             </View>
           ) : null}
 
-          {hasActivePhase && phase && phase.suggested_questions.length > 0 ? (
+          {isChatEmpty && hasActivePhase && phase && phase.suggested_questions.length > 0 ? (
             <View style={styles.phaseChipsRow}>
               {phase.suggested_questions.map((question) => (
                 <Pressable
@@ -318,7 +385,23 @@ export default function StudentChatScreen() {
               placeholderTextColor={colors.textMuted}
               value={message}
               onChangeText={setMessage}
+              multiline
+              // Native: the keyboard's send key submits instead of adding a newline.
+              submitBehavior="submit"
               onSubmitEditing={handleSend}
+              // Web: react-native-web ignores submitBehavior, so Enter sends
+              // here and Shift+Enter still adds a newline.
+              onKeyPress={
+                Platform.OS === "web"
+                  ? (e) => {
+                      const event = e as unknown as { key: string; shiftKey?: boolean; preventDefault: () => void };
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        handleSend();
+                      }
+                    }
+                  : undefined
+              }
               returnKeyType="send"
             />
             <Pressable
@@ -523,6 +606,39 @@ const createStyles = (colors: ThemePalette) =>
       marginBottom: 4,
       paddingLeft: 4,
     },
+    ticketRow: {
+      alignSelf: "flex-start",
+      maxWidth: "85%",
+      gap: 8,
+      marginTop: 6,
+      marginBottom: 4,
+      padding: 12,
+      borderRadius: 14,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    ticketRowLabel: {
+      fontFamily: "Montserrat_700Bold",
+      fontSize: 13,
+      color: colors.textPrimary,
+    },
+    viewTicketButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 6,
+      backgroundColor: colors.accent,
+      borderRadius: 16,
+      paddingVertical: 7,
+      paddingHorizontal: 14,
+    },
+    viewTicketButtonPressed: { opacity: 0.8 },
+    viewTicketButtonText: {
+      fontFamily: "Montserrat_700Bold",
+      fontSize: 13,
+      color: colors.white,
+    },
     feedbackThanksText: {
       fontFamily: "Montserrat_400Regular",
       fontSize: 12,
@@ -558,6 +674,7 @@ const createStyles = (colors: ThemePalette) =>
       paddingVertical: 8,
     },
     phaseChipPressed: { opacity: 0.6 },
+    clarifyChipsRow: { marginTop: 8, paddingBottom: 4 },
     phaseChipText: {
       fontFamily: "Montserrat_400Regular",
       fontSize: 13,
@@ -565,7 +682,7 @@ const createStyles = (colors: ThemePalette) =>
     },
     inputBar: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-end",
       gap: 10,
       paddingVertical: 12,
       marginBottom: 8,
@@ -575,9 +692,13 @@ const createStyles = (colors: ThemePalette) =>
       backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 24,
+      borderRadius: 20,
       paddingHorizontal: 16,
-      paddingVertical: 10,
+      // Explicit top/bottom - iOS ignores paddingVertical on multiline inputs.
+      paddingTop: 10,
+      paddingBottom: 10,
+      minHeight: 40,
+      maxHeight: 120,
       fontSize: 15,
       fontFamily: "Montserrat_400Regular",
       color: colors.textPrimary,

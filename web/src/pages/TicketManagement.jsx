@@ -247,7 +247,7 @@ export default function TicketManagement() {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <th className="px-5 py-3">Question</th>
+              <th className="px-5 py-3">Ticket</th>
               <th className="px-5 py-3">From</th>
               <th className="px-5 py-3">Category</th>
               <th className="px-5 py-3">Office</th>
@@ -268,7 +268,12 @@ export default function TicketManagement() {
                     onClick={() => handleToggleRow(ticket)}
                     className="cursor-pointer border-b border-gray-50 text-navy transition-colors last:border-0 hover:bg-gray-50/80"
                   >
-                    <td className="max-w-md px-5 py-3.5 truncate">{displayIssue(ticket.issue_description)}</td>
+                    <td className="max-w-md px-5 py-3.5">
+                      <div className="truncate font-semibold">
+                        {ticket.title} <span className="font-normal text-gray-400">— Ticket #{ticket.ticket_id}</span>
+                      </div>
+                      <div className="truncate text-sm text-gray-500">{displayIssue(ticket.issue_description)}</div>
+                    </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-2.5">
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy/10 text-xs font-bold text-navy">
@@ -294,6 +299,14 @@ export default function TicketManagement() {
                   {expandedTicketId === ticket.ticket_id && (
                     <tr className="border-b border-gray-50 bg-gray-50/60">
                       <td colSpan={5} className="px-5 py-3">
+                        {ticket.conversation_context && (
+                          <div className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Conversation before escalation
+                            </p>
+                            <p className="whitespace-pre-wrap text-sm text-navy">{ticket.conversation_context}</p>
+                          </div>
+                        )}
                         <div
                           className="mb-3 flex flex-wrap items-center gap-4"
                           onClick={(e) => e.stopPropagation()}

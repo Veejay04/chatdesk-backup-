@@ -10,6 +10,11 @@ export type ChatMessage = {
   // came from, needed to submit thumbs up/down feedback on it.
   logId?: number;
   feedback?: "up" | "down" | null;
+  // Set when this reply created a ticket or pointed to an already-open one.
+  ticketId?: number;
+  ticketTitle?: string;
+  // FAQ questions offered when the bot asks the student to clarify.
+  suggestions?: string[];
 };
 
 export type Office = { office_id: number; name: string };
@@ -101,16 +106,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const trimmed = text.trim();
     if (!trimmed || isSending) return;
 
+    // Earlier turns of this chat so the backend can tell a follow-up
+    // ("is that all?") from a new, unanswerable question.
+    const history = messages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
+
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setIsSending(true);
     try {
       const { data } = await axiosClient.post("/chat/ask/", {
         message: trimmed,
+        history,
         ...(selectedOffice ? { office: selectedOffice.office_id } : {}),
       });
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", text: data.reply, logId: data.log_id, feedback: null },
+        {
+          role: "assistant",
+          text: data.reply,
+          logId: data.log_id,
+          feedback: null,
+          ...(data.ticket_id ? { ticketId: data.ticket_id, ticketTitle: data.ticket_title } : {}),
+          ...(data.suggested_questions?.length ? { suggestions: data.suggested_questions } : {}),
+        },
       ]);
     } catch {
       setMessages((prev) => [

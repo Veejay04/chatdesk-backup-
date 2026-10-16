@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import { Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -15,6 +15,7 @@ import type { ThemePalette } from "../../theme/colors";
 
 type Ticket = {
   ticket_id: number;
+  title: string;
   subject_category: string;
   issue_description: string;
   status: string;
@@ -23,6 +24,12 @@ type Ticket = {
 };
 
 const seenTicketsKey = (userId: number) => `chatdesk_seen_resolved_tickets_${userId}`;
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "Pending",
+  active: "In Progress",
+  resolved: "Resolved",
+};
 
 export default function TicketsScreen() {
   const { currentUser, logout } = useAuth();
@@ -68,6 +75,24 @@ export default function TicketsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Set by the chat's "View Ticket" button. The tab stays mounted, so this
+  // runs on every new ticketId, then clears it so it won't reopen later.
+  const { ticketId } = useLocalSearchParams<{ ticketId?: string }>();
+  useEffect(() => {
+    if (!ticketId) return;
+    (async () => {
+      try {
+        const { data } = await axiosClient.get<Ticket>(`/tickets/${ticketId}/`);
+        handleView(data);
+      } catch {
+        // Not found or not this student's ticket - just show the list.
+      }
+      loadTickets();
+      router.setParams({ ticketId: undefined });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketId]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await loadTickets();
@@ -78,7 +103,9 @@ export default function TicketsScreen() {
     Haptics.selectionAsync().catch(() => {});
     setViewingTicket(ticket);
 
-    if (!currentUser) return;
+    // Only a resolved ticket counts as seen - otherwise viewing it while
+    // pending would stop the badge from ever showing its resolution.
+    if (!currentUser || ticket.status !== "resolved") return;
     try {
       const key = seenTicketsKey(currentUser.user_id);
       const stored = await AsyncStorage.getItem(key);
@@ -165,7 +192,12 @@ export default function TicketsScreen() {
               const isResolved = ticket.status === "resolved";
               return (
                 <View key={ticket.ticket_id} style={styles.row}>
-                  <Text style={[styles.rowLabel, styles.labelColumn]}>Ticket {ticket.ticket_id}</Text>
+                  <View style={styles.labelColumn}>
+                    <Text style={styles.rowTitle} numberOfLines={2}>
+                      {ticket.title}
+                    </Text>
+                    <Text style={styles.rowNumber}>Ticket #{ticket.ticket_id}</Text>
+                  </View>
                   <View style={styles.statusColumn}>
                     {isResolved ? (
                       <MaterialIcons name="check" size={20} color={colors.textPrimary} />
@@ -175,13 +207,12 @@ export default function TicketsScreen() {
                   </View>
                   <View style={styles.actionColumn}>
                     <Pressable
-                      style={[styles.viewButton, !isResolved && styles.viewButtonDisabled]}
+                      style={styles.viewButton}
                       onPress={() => handleView(ticket)}
-                      disabled={!isResolved}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View ${ticket.title}, ticket number ${ticket.ticket_id}`}
                     >
-                      <Text style={[styles.viewButtonText, !isResolved && styles.viewButtonTextDisabled]}>
-                        View
-                      </Text>
+                      <Text style={styles.viewButtonText}>View</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -203,12 +234,18 @@ export default function TicketsScreen() {
               <>
                 <View style={styles.modalHeader}>
                   <View style={styles.modalHeaderText}>
-                    <Text style={styles.modalEyebrow}>Ticket {viewingTicket.ticket_id}</Text>
-                    <Text style={styles.modalTitle}>{viewingTicket.subject_category}</Text>
+                    <Text style={styles.modalEyebrow}>Ticket #{viewingTicket.ticket_id}</Text>
+                    <Text style={styles.modalTitle}>{viewingTicket.title}</Text>
                   </View>
                   <View style={styles.modalStatusBadge}>
-                    <MaterialIcons name="check-circle" size={14} color={colors.accentText} />
-                    <Text style={styles.modalStatusText}>Resolved</Text>
+                    <MaterialIcons
+                      name={viewingTicket.status === "resolved" ? "check-circle" : "schedule"}
+                      size={14}
+                      color={colors.accentText}
+                    />
+                    <Text style={styles.modalStatusText}>
+                      {STATUS_LABELS[viewingTicket.status] ?? viewingTicket.status}
+                    </Text>
                   </View>
                 </View>
 
@@ -218,7 +255,7 @@ export default function TicketsScreen() {
 
                   <Text style={[styles.modalSectionLabel, styles.modalSectionLabelSpaced]}>Answer</Text>
                   <Text style={styles.modalSectionText}>
-                    {viewingTicket.resolution ?? "No response yet."}
+                    {viewingTicket.resolution ?? "Waiting for a staff response."}
                   </Text>
                 </ScrollView>
 
@@ -318,7 +355,8 @@ const createStyles = (colors: ThemePalette) =>
       borderTopWidth: 1,
       borderTopColor: colors.border,
     },
-    rowLabel: { fontFamily: "Montserrat_400Regular", fontSize: 15, color: colors.textPrimary },
+    rowTitle: { fontFamily: "Montserrat_700Bold", fontSize: 14, color: colors.textPrimary },
+    rowNumber: { fontFamily: "Montserrat_400Regular", fontSize: 12, color: colors.textMuted, marginTop: 2 },
     pendingText: { fontFamily: "Montserrat_400Regular", fontSize: 14, color: colors.textSecondary },
     viewButton: {
       borderWidth: 1,
@@ -327,9 +365,7 @@ const createStyles = (colors: ThemePalette) =>
       paddingVertical: 6,
       paddingHorizontal: 16,
     },
-    viewButtonDisabled: { borderColor: colors.border },
     viewButtonText: { fontFamily: "Montserrat_700Bold", fontSize: 13, color: colors.textPrimary },
-    viewButtonTextDisabled: { color: colors.textMuted },
     modalBackdrop: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.5)",

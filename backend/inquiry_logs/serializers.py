@@ -19,8 +19,16 @@ class InquiryLogSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ChatTurnSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=["user", "assistant"])
+    text = serializers.CharField(allow_blank=True, trim_whitespace=True)
+
+
 class ChatAskSerializer(serializers.Serializer):
     message = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    # Earlier turns of the current chat, oldest first - context only, so
+    # follow-ups like "is that all?" aren't escalated. Optional.
+    history = ChatTurnSerializer(many=True, required=False, max_length=20)
     # Which office/category the student picked before asking - optional at
     # the API level (older mobile builds or a "General" skip option can omit
     # it), but the mobile UI is expected to always collect it now.

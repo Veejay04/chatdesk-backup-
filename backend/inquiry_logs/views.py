@@ -3,16 +3,18 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tickets.services import create_ticket_from_log
 from users.permissions import IsOfficeStaff, IsStudent
 
 from .models import InquiryLog
 from .serializers import ChatAskSerializer, InquiryLogFeedbackSerializer, InquiryLogSerializer
-from .services import classify_message
+from .services import ESCALATED_INTENT, classify_message, format_turns
 
 
 class ChatAskView(APIView):
-    """POST /api/v1/chat/ask/ - student only. Logs every interaction and
-    escalates to a ticket when the classifier can't resolve the intent."""
+    """POST /api/v1/chat/ask/ - student only. Logs every interaction, then
+    answers, asks to clarify, points to an already-open ticket, or creates a
+    new ticket - whichever classify_message decided."""
 
     permission_classes = [IsStudent]
 
@@ -21,8 +23,9 @@ class ChatAskView(APIView):
         serializer.is_valid(raise_exception=True)
         message = serializer.validated_data["message"]
         office = serializer.validated_data.get("office")
+        history = serializer.validated_data.get("history")
 
-        result = classify_message(message, office=office)
+        result = classify_message(message, office=office, history=history, user=request.user)
 
         log = InquiryLog.objects.create(
             user=request.user,
@@ -30,7 +33,7 @@ class ChatAskView(APIView):
             user_message=message,
             detected_intent=result["detected_intent"],
             chatbot_response=result["reply"],
-            is_escalated=result["detected_intent"] == "unresolved_complex_query",
+            is_escalated=result["detected_intent"] == ESCALATED_INTENT,
         )
 
         payload = {
@@ -38,16 +41,24 @@ class ChatAskView(APIView):
             "detected_intent": log.detected_intent,
             "reply": log.chatbot_response,
             "is_escalated": log.is_escalated,
+            "suggested_questions": result.get("suggested_questions", []),
         }
 
+        existing_ticket = result.get("existing_ticket")
+        if existing_ticket is not None:
+            payload["ticket_id"] = existing_ticket.ticket_id
+            payload["ticket_title"] = existing_ticket.title
+
         if log.is_escalated:
-            try:
-                from tickets.services import create_ticket_from_log
-            except ImportError:
-                # tickets app lands in feature/ticket-escalation-logic - log is still recorded
-                return Response(payload, status=status.HTTP_201_CREATED)
-            ticket = create_ticket_from_log(log, office=office)
+            context = format_turns(history)
+            ticket = create_ticket_from_log(
+                log,
+                office=office,
+                title=result["ticket_title"],
+                conversation_context=f"{context}\nStudent: {message}" if context else "",
+            )
             payload["ticket_id"] = ticket.ticket_id
+            payload["ticket_title"] = ticket.title
             return Response(payload, status=status.HTTP_201_CREATED)
 
         return Response(payload, status=status.HTTP_200_OK)

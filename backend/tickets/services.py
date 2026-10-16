@@ -1,10 +1,12 @@
-from .models import Ticket
+from .models import FALLBACK_TICKET_TITLE, Ticket
 
 
-def create_ticket_from_log(log, office=None):
+def create_ticket_from_log(log, office=None, title=FALLBACK_TICKET_TITLE, conversation_context=""):
     return Ticket.objects.create(
         user=log.user,
         log=log,
+        title=title,
+        conversation_context=conversation_context,
         subject_category="Unresolved Inquiry",
         issue_description=f'Student asked: "{log.user_message}" - AI could not resolve.',
         status=Ticket.Status.PENDING,

@@ -13,12 +13,12 @@ class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = [
-            "ticket_id", "user_id", "resolved_by", "log_id", "subject_category",
-            "office", "office_name", "issue_description", "status", "resolution",
+            "ticket_id", "user_id", "resolved_by", "log_id", "title", "subject_category",
+            "office", "office_name", "issue_description", "conversation_context", "status", "resolution",
             "created_at", "resolved_at",
         ]
         read_only_fields = [
-            "ticket_id", "user_id", "log_id", "resolved_by", "office_name",
+            "ticket_id", "user_id", "log_id", "resolved_by", "office_name", "conversation_context",
             "created_at", "resolved_at",
         ]
 
@@ -28,10 +28,13 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Ticket
-        fields = ["subject_category", "issue_description"]
+        fields = ["title", "subject_category", "issue_description"]
+        extra_kwargs = {"title": {"required": False}}
 
     def create(self, validated_data):
         request = self.context["request"]
+        # A manual ticket's category is already the student's own words.
+        validated_data.setdefault("title", validated_data["subject_category"][:100])
         return Ticket.objects.create(user=request.user, **validated_data)
 
 
@@ -48,4 +51,4 @@ class TicketUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Ticket
-        fields = ["status", "resolution", "office", "subject_category"]
+        fields = ["status", "resolution", "office", "title", "subject_category"]
