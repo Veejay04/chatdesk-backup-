@@ -274,7 +274,7 @@ export default function StudentChatScreen() {
                         <Text style={styles.viewTicketButtonText}>View Ticket</Text>
                       </Pressable>
                     </View>
-                  ) : item.role === "assistant" && item.logId ? (
+                  ) : item.role === "assistant" && item.logId && item.canRate ? (
                     <View style={styles.feedbackRow}>
                       <Pressable
                         onPress={() => {
@@ -385,6 +385,8 @@ export default function StudentChatScreen() {
               placeholderTextColor={colors.textMuted}
               value={message}
               onChangeText={setMessage}
+              // Matches the backend's chat message cap.
+              maxLength={1000}
               multiline
               // Native: the keyboard's send key submits instead of adding a newline.
               submitBehavior="submit"

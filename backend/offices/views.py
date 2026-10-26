@@ -1,4 +1,6 @@
-from rest_framework import generics
+from django.db.models import ProtectedError
+from rest_framework import generics, status
+from rest_framework.response import Response
 
 from .models import Office
 from .permissions import IsAdminOrReadOnly
@@ -21,3 +23,22 @@ class OfficeDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = OfficeSerializer
     permission_classes = [IsAdminOrReadOnly]
     lookup_url_kwarg = "office_id"
+
+    def destroy(self, request, *args, **kwargs):
+        office = self.get_object()
+        try:
+            office.delete()
+        except ProtectedError:
+            staff_count = office.staff_members.count()
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": (
+                        f"This office still has {staff_count} Office Admin account(s). "
+                        "Reassign or remove them in User Management before deleting the office."
+                    ),
+                    "details": {},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)

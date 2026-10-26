@@ -75,8 +75,9 @@ export default function ProfileScreen() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       updateCurrentUser(data);
-    } catch {
-      Alert.alert("Unable to update photo", "Please try again.");
+    } catch (error: any) {
+      const reason = error.response?.data?.details?.profile_picture?.[0];
+      Alert.alert("Unable to update photo", reason ?? "Please try again.");
     } finally {
       setIsUploadingPhoto(false);
     }

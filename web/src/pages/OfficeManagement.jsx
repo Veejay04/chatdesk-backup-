@@ -12,6 +12,7 @@ export default function OfficeManagement() {
   const [editingOffice, setEditingOffice] = useState(null);
   const [pendingDeleteOffice, setPendingDeleteOffice] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   const [search, setSearch] = useState("");
 
   const loadOffices = () => {
@@ -40,6 +41,9 @@ export default function OfficeManagement() {
       await deleteOffice(pendingDeleteOffice.office_id);
       setPendingDeleteOffice(null);
       loadOffices();
+    } catch (err) {
+      // e.g. the office still has Office Admins assigned (backend blocks it).
+      setDeleteError(err.response?.data?.message ?? "Could not delete this office.");
     } finally {
       setIsDeleting(false);
     }
@@ -176,10 +180,13 @@ export default function OfficeManagement() {
       <ConfirmDialog
         open={pendingDeleteOffice !== null}
         title={`Delete ${pendingDeleteOffice?.name ?? "this office"}?`}
-        message="FAQs and tickets routed to it will become unassigned."
+        message={deleteError ?? "FAQs and tickets routed to it will become unassigned."}
         isConfirming={isDeleting}
         onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDeleteOffice(null)}
+        onCancel={() => {
+          setPendingDeleteOffice(null);
+          setDeleteError(null);
+        }}
       />
     </section>
   );

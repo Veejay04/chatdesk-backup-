@@ -19,13 +19,22 @@ class InquiryLogSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+CHAT_MESSAGE_MAX_LENGTH = 1000
+
+
 class ChatTurnSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=["user", "assistant"])
-    text = serializers.CharField(allow_blank=True, trim_whitespace=True)
+    # Assistant turns carry full FAQ answers, so this is looser than the
+    # message cap; the classifier truncates each turn anyway.
+    text = serializers.CharField(allow_blank=True, trim_whitespace=True, max_length=10000)
 
 
 class ChatAskSerializer(serializers.Serializer):
-    message = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    # Capped so one message can't run up the OpenAI bill or, by failing the
+    # AI call, fall through to creating a ticket.
+    message = serializers.CharField(
+        allow_blank=False, trim_whitespace=True, max_length=CHAT_MESSAGE_MAX_LENGTH
+    )
     # Earlier turns of the current chat, oldest first - context only, so
     # follow-ups like "is that all?" aren't escalated. Optional.
     history = ChatTurnSerializer(many=True, required=False, max_length=20)
@@ -44,3 +53,10 @@ class InquiryLogFeedbackSerializer(serializers.ModelSerializer):
     class Meta:
         model = InquiryLog
         fields = ["feedback"]
+
+    def validate(self, attrs):
+        # Only an FAQ answer can be rated - a vote on "Could you rephrase?"
+        # or a greeting means nothing and dilutes the helpfulness data.
+        if self.instance is not None and not self.instance.is_answer:
+            raise serializers.ValidationError("Only answers from the knowledge base can be rated.")
+        return attrs

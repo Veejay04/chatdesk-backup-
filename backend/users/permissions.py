@@ -29,7 +29,11 @@ class IsOfficeStaff(BasePermission):
     get_queryset(), not here."""
 
     def has_permission(self, request, view):
-        return bool(
-            request.user and request.user.is_authenticated
-            and request.user.role in (request.user.Role.SUPERADMIN, request.user.Role.OFFICE_ADMIN)
-        )
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        if user.role == user.Role.SUPERADMIN:
+            return True
+        # An Office Admin without an office must get nothing: their querysets
+        # filter by office=None, which would match every *unassigned* row.
+        return user.role == user.Role.OFFICE_ADMIN and user.office_id is not None

@@ -18,9 +18,12 @@ import pymupdf
 from django.conf import settings
 from openai import OpenAI
 
+from faqs.models import Faq
+
 MODEL = "gpt-5.6-luna"
 RENDER_DPI = 150
 MAX_PAGES = 20
+MAX_FAQS_IN_PROMPT = 200
 
 SYSTEM_PROMPT = """You are reading an official USTP academic calendar (a color-coded table \
 document, not prose) to extract periods relevant to a STUDENT-facing chatbot's guidance \
@@ -106,6 +109,21 @@ def _render_pages_as_data_urls(pdf_bytes):
     return data_urls
 
 
+def _faq_reuse_instructions():
+    """Phase chips are sent to the chatbot verbatim. Reusing an FAQ's exact
+    question makes the chip hit the chatbot's exact-match path - always
+    answered, no AI call - instead of risking a clarification or ticket."""
+    questions = list(Faq.objects.order_by("faq_id").values_list("question_text", flat=True)[:MAX_FAQS_IN_PROMPT])
+    if not questions:
+        return ""
+    listed = "\n".join(f"- {q}" for q in questions)
+    return (
+        "\n\nThe chatbot's knowledge base already answers these exact questions. When a "
+        "suggested_question you'd write means the same as one of them, use that question's "
+        "exact wording instead of your own. Only write a new question if none fit:\n" + listed
+    )
+
+
 def extract_phases_from_pdf(pdf_bytes):
     """Returns a list of candidate phase dicts (not yet saved)."""
     page_images = _render_pages_as_data_urls(pdf_bytes)
@@ -114,11 +132,12 @@ def extract_phases_from_pdf(pdf_bytes):
     for data_url in page_images:
         content.append({"type": "image_url", "image_url": {"url": data_url}})
 
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    # Vision over up to 20 pages is slow, but never minutes-long.
+    client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=90, max_retries=1)
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + _faq_reuse_instructions()},
             {"role": "user", "content": content},
         ],
         response_format=RESPONSE_SCHEMA,

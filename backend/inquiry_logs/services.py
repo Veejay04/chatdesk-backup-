@@ -17,14 +17,16 @@ from openai import OpenAI
 from faqs.models import Faq
 from tickets.models import FALLBACK_TICKET_TITLE, Ticket
 
-MODEL = "gpt-5.6-luna"
+from .models import (
+    CLARIFICATION_INTENT,
+    CONVERSATIONAL_INTENT,
+    DUPLICATE_TICKET_INTENT,
+    ESCALATED_INTENT,
+    OFF_TOPIC_INTENT,
+    UNCLEAR_INTENT,
+)
 
-ESCALATED_INTENT = "unresolved_complex_query"
-CONVERSATIONAL_INTENT = "conversational"
-CLARIFICATION_INTENT = "needs_clarification"
-OFF_TOPIC_INTENT = "off_topic"
-UNCLEAR_INTENT = "unclear"
-DUPLICATE_TICKET_INTENT = "duplicate_ticket"
+MODEL = "gpt-5.6-luna"
 
 ESCALATION_REPLY = (
     "I'm sorry, I couldn't find the exact procedure for that. "
@@ -141,7 +143,10 @@ Tagalog or Taglish. If the message only asks for staff or says the previous answ
 topic from the conversation (e.g. "Enrollment Process Follow-up"), not "Staff Assistance". Never a full \
 sentence, no ending punctuation. Always fill it in, whatever the message_type."""
 
-_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+# OpenAI's defaults (10-minute timeout, 2 retries) would leave a student's
+# request hanging for minutes. A timeout counts as an AI failure, which
+# escalates once (the duplicate check stops repeats).
+_client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=15, max_retries=1)
 
 
 def _clean_ticket_title(raw) -> str:
@@ -227,11 +232,17 @@ def _exact_repeat_ticket(message: str, open_tickets):
     return None
 
 
+def exact_repeat_ticket(user, message: str):
+    """Re-checked by ChatAskView under a per-student lock, right before a
+    ticket is created, to close the race between two concurrent requests."""
+    return _exact_repeat_ticket(message, _open_tickets_for(user))
+
+
 def _escalation_result(ticket_title=FALLBACK_TICKET_TITLE) -> dict:
     return {"detected_intent": ESCALATED_INTENT, "reply": ESCALATION_REPLY, "ticket_title": ticket_title}
 
 
-def _duplicate_result(ticket) -> dict:
+def duplicate_result(ticket) -> dict:
     return {"detected_intent": DUPLICATE_TICKET_INTENT, "reply": DUPLICATE_TICKET_REPLY, "existing_ticket": ticket}
 
 
@@ -239,7 +250,7 @@ def _staff_result(message, ticket_title, open_tickets, duplicate_id=None) -> dic
     duplicate = next((t for t in open_tickets if str(t.ticket_id) == duplicate_id), None)
     duplicate = duplicate or _exact_repeat_ticket(message, open_tickets)
     if duplicate is not None:
-        return _duplicate_result(duplicate)
+        return duplicate_result(duplicate)
     return _escalation_result(_clean_ticket_title(ticket_title))
 
 

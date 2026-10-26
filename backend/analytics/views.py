@@ -2,8 +2,12 @@ from django.db.models import Count, Q
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from inquiry_logs.models import InquiryLog
+from inquiry_logs.models import DUPLICATE_TICKET_INTENT, NON_INQUIRY_INTENTS, InquiryLog
 from tickets.models import Ticket
+
+# Logged chat turns that aren't a new question: small talk, clarification
+# prompts, off-topic, gibberish, and repeats of an already-open ticket.
+OTHER_INTERACTION_INTENTS = (*NON_INQUIRY_INTENTS, DUPLICATE_TICKET_INTENT)
 from users.permissions import IsOfficeStaff
 
 
@@ -32,12 +36,19 @@ class AnalyticsOverviewView(APIView):
         if date_to:
             logs = logs.filter(timestamp__date__lte=date_to)
 
-        intent_frequencies = [
-            {"intent": row["detected_intent"], "count": row["count"]}
-            for row in logs.values("detected_intent")
-                          .annotate(count=Count("detected_intent"))
-                          .order_by("-count")
-        ]
+        def frequencies(queryset):
+            return [
+                {"intent": row["detected_intent"], "count": row["count"]}
+                for row in queryset.values("detected_intent")
+                                   .annotate(count=Count("detected_intent"))
+                                   .order_by("-count")
+            ]
+
+        # Only real questions (FAQ answers + escalations) count as inquiries,
+        # so "hi"/"ok thanks" don't inflate totals or dilute the topic chart.
+        inquiries = logs.exclude(detected_intent__in=OTHER_INTERACTION_INTENTS)
+        intent_frequencies = frequencies(inquiries)
+        other_interactions = frequencies(logs.filter(detected_intent__in=OTHER_INTERACTION_INTENTS))
 
         tickets = tickets_base
         if date_from:
@@ -53,9 +64,11 @@ class AnalyticsOverviewView(APIView):
         resolution_rate = round(resolved / total_tickets, 2) if total_tickets else 0.0
 
         return Response({
-            "total_inquiries": logs.count(),
-            "total_escalations": logs.filter(is_escalated=True).count(),
+            "total_inquiries": inquiries.count(),
+            "total_escalations": inquiries.filter(is_escalated=True).count(),
             "resolution_rate": resolution_rate,
             "intent_frequencies": intent_frequencies,
+            "total_messages": logs.count(),
+            "other_interactions": other_interactions,
             "tickets_by_status": tickets_by_status,
         })

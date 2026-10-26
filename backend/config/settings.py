@@ -5,6 +5,7 @@ Sprint 1 scope: project skeleton, custom tbl_user model, JWT auth.
 See claude/API_CONTRACT.md and claude/PROJECT CONTEXT.md for the source of truth.
 """
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -78,6 +79,14 @@ DATABASES = {
     }
 }
 
+# `manage.py test` needs to create a throwaway database, which the shared
+# local Postgres user (chatdesk_user) isn't allowed to do - so tests run on
+# in-memory SQLite by default. Set TEST_WITH_POSTGRES=True (with a user that
+# has CREATEDB) to run them against Postgres instead.
+RUNNING_TESTS = "test" in sys.argv[1:2]
+if RUNNING_TESTS and not config("TEST_WITH_POSTGRES", default=False, cast=bool):
+    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
+
 # Custom user model: tbl_user (email as USERNAME_FIELD, explicit role field)
 AUTH_USER_MODEL = "users.User"
 
@@ -87,6 +96,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+if RUNNING_TESTS:
+    # Real hashing is deliberately slow; tests create many users and codes.
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Manila"
@@ -114,7 +126,24 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # Applied per view via throttle_scope / users/throttles.py. Per-IP limits
+    # stay loose since a whole campus Wi-Fi can share one public IP; the
+    # per-email and per-student limits are the strict ones.
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "20/min",
+        "login_email": "10/min",
+        "register": "10/hour",
+        "password_reset_request": "20/hour",
+        "password_reset_request_email": "5/hour",
+        "password_reset_confirm": "30/hour",
+        "verify_email_resend": "5/hour",
+        "chat": "20/min",
+    },
 }
+
+# Throttle counters live here. Fine for one dev server; a multi-process
+# deployment needs a shared cache (e.g. Redis) or each process counts alone.
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(
@@ -146,10 +175,24 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+# Seconds before a stuck SMTP connection gives up instead of hanging the request.
+EMAIL_TIMEOUT = 10
 
-# True once a real Gmail App Password is in place. Until then, both the
-# password-reset and email-verification flows fall back to returning their
-# code/link directly in the API response instead of emailing it.
+# True once a real Gmail App Password is in place.
 REAL_EMAIL_ENABLED = bool(
     EMAIL_HOST_PASSWORD and EMAIL_HOST_PASSWORD != "replace-with-gmail-app-password"
 )
+# Without real email, reset codes and verification links are returned in the
+# API response so the flows stay testable - but only in DEBUG, never on a
+# real deployment (that would let anyone reset anyone's password).
+EMAIL_DEV_FALLBACK = DEBUG and not REAL_EMAIL_ENABLED
+
+# Base for links inside emails (verification). Falls back to the address the
+# request came in on, which is usually a LAN IP that only works on the same
+# Wi-Fi - set this to a reachable address for real use.
+PUBLIC_BASE_URL = config("PUBLIC_BASE_URL", default="").rstrip("/")
+
+# Optional registration gates - both off by default (API contract: any email
+# domain may register). ALLOWED_EMAIL_DOMAINS e.g. "ustp.edu.ph".
+ALLOWED_EMAIL_DOMAINS = [d.lower() for d in config("ALLOWED_EMAIL_DOMAINS", default="", cast=Csv()) if d]
+REQUIRE_EMAIL_VERIFICATION = config("REQUIRE_EMAIL_VERIFICATION", default=False, cast=bool)

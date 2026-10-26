@@ -28,6 +28,12 @@ This is the agreed shape that the Django backend developer will build against, a
   "details": { "email": ["This field must be a valid email address."] }
 }
 
+- Non-field errors (e.g. wrong login password) come in details.non_field_errors -
+  show that to the user, not the generic "Invalid request parameters." message.
+- Rate limits: some endpoints are throttled (noted per endpoint). Over the limit
+  returns 429 with error "throttled" and a message saying when to retry:
+  { "error": "throttled", "message": "Request was throttled. Expected available in 42 seconds.", "details": {} }
+
 ## Authentication
 
 ### POST /api/v1/auth/register/
@@ -58,15 +64,41 @@ Response 201:
 }
 # school_id must be unique - register returns 400 with a school_id validation
 # error if it's already taken (same pattern as the email uniqueness check).
+# password must pass the full password rules (not too common, not all numbers,
+# not too similar to the name/email, 8+ characters) - 400 under details.password.
+# A verification email is sent. If Gmail fails to send it, the account is NOT
+# created and the response is 503:
+# { "error": "email_delivery_failed", "message": "We couldn't send your verification email...", "details": {} }
+# Dev fallback: only when DEBUG=True and no Gmail App Password is configured,
+# the response also includes "dev_verify_url" instead of emailing it.
+# Optional backend settings (both off by default): ALLOWED_EMAIL_DOMAINS limits
+# registration to e.g. ustp.edu.ph (400 under details.email);
+# REQUIRE_EMAIL_VERIFICATION blocks student login until the link is clicked.
+# Throttled: 10/hour per IP.
 
 ### POST /api/v1/auth/login/
 Public.
 Request: { "email": "string", "password": "string" }
 Response 200: Same shape as the register response.
+Response 400: reason in details.non_field_errors - "Invalid email or password.",
+"This account has been deactivated.", or (only with REQUIRE_EMAIL_VERIFICATION)
+"Please verify your email address first...".
+Throttled: 20/min per IP and 10/min per email.
 
 ### POST /api/v1/auth/token/refresh/
 Public (requires valid refresh token).
-Request: { "refresh": "jwt_refresh_token_string" } → Response 200: { "access": "new_jwt_access_string" }
+Request: { "refresh": "jwt_refresh_token_string" } → Response 200: { "access": "new_jwt_access_string", "refresh": "new_jwt_refresh_string" }
+# Refresh tokens rotate: the old one is blacklisted the moment it's used.
+# Clients MUST store the new "refresh" from every response - reusing the old
+# one returns 401 (this is what logged users out ~30 minutes after login).
+
+### POST /api/v1/auth/verify-email/resend/
+Public. Emails a fresh verification link (older links stop working). Always
+the same response, whether or not the email belongs to an unverified account.
+Request: { "email": "student@gmail.com" }
+Response 200: { "message": "If that email belongs to an unverified account, a new verification link has been sent." }
+# dev_verify_url is included under the same DEBUG-only fallback as register.
+# Throttled: 5/hour per IP and per email.
 
 ### POST /api/v1/auth/logout/
 Auth required. Blacklists the refresh token.
@@ -85,6 +117,8 @@ User Profile shape - re-fetch GET /auth/me/ if you need the rest.
 Request (multipart/form-data):
 first_name=Jefferson&last_name=Booc&profile_picture=<file>
 Response 200: { "first_name": "Jefferson", "last_name": "Booc", "profile_picture": "http://<host>/media/profile_pictures/xyz.jpg" }
+# profile_picture: max 2 MB (400 under details.profile_picture otherwise).
+# Stored as a JPEG shrunk to fit 512x512.
 
 ### POST /api/v1/auth/password-reset/request/
 Public. Mobile "Forgot Password" step 1. Emails a 6-digit code (10 min expiry)
@@ -94,11 +128,14 @@ account existence.
 
 Request: { "email": "student@gmail.com" }
 Response 200: { "message": "If that email is registered, a password reset code has been sent." }
-# Dev fallback: until backend/.env's EMAIL_HOST_PASSWORD holds a real Gmail
-# App Password (settings.PASSWORD_RESET_EMAIL_ENABLED is False), the response
-# also includes "dev_code": "123456" so the flow is testable without real
-# email delivery. Remove reliance on dev_code once email sending is live -
-# it will stop appearing automatically once the App Password is set.
+# Only the newest code is valid - requesting a new one cancels older ones.
+# A new code can be requested once per 60 seconds per account.
+# If Gmail fails to send, the response is still this same 200 (so it can't be
+# used to discover which emails have accounts); the failure is logged.
+# Dev fallback: only when DEBUG=True and backend/.env has no Gmail App
+# Password, the response also includes "dev_code": "123456". It is never
+# returned with DEBUG=False.
+# Throttled: 20/hour per IP and 5/hour per email.
 
 ### POST /api/v1/auth/password-reset/confirm/
 Public. Mobile "Forgot Password" step 2. Verifies the emailed code and sets
@@ -114,6 +151,10 @@ Request:
 Response 200: { "message": "Password has been reset. You can now log in." }
 Response 400 (wrong/expired/already-used code, or unknown email):
 { "error": "validation_error", "message": "Invalid request parameters.", "details": { "code": ["Invalid or expired code."] } }
+# A code stops working after 5 wrong guesses (request a new one).
+# A successful reset signs the user out of every existing session (all their
+# refresh tokens are blacklisted).
+# Throttled: 30/hour per IP.
 # Not on the original ERD - tbl_password_reset_code added post-Sprint-1-baseline
 # to support this flow; flagged for the team to fold into the next ERD revision.
 
@@ -168,26 +209,43 @@ category enum: Enrollment, Scholarship, Clearance, Discipline, General.
 Method,Path,Roles,Notes
 GET,/api/v1/faqs/,all,"List FAQs, supports ?category= filter."
 POST,/api/v1/faqs/,admin,Create a new FAQ entry.
+GET,/api/v1/faqs/popular/,all,"The FAQs students ask most (chat quick actions). ?office= narrows to that office's FAQs + uncategorized ones; ?limit= (default 3, max 10). Not paginated: [{ ""faq_id"": 105, ""question_text"": ""..."" }]"
 GET,/api/v1/faqs/{faq_id}/,all,Detail view.
 PATCH,/api/v1/faqs/{faq_id}/,admin,Edit FAQ (automatically updates updated_at and updated_by).
 DELETE,/api/v1/faqs/{faq_id}/,admin,Remove obsolete FAQ.
+# Validation on create/edit: answer_content must be at least 15 characters
+# (students see it word for word - no placeholders like "OSA ONLY"), and
+# question_text/answer_content must not contain the broken character "�"
+# (usually from copy-pasting). Both return 400 under the field name.
 
 ## Chat Interaction & Inquiry Logging
 This handles the core AI interaction. The frontend posts a message, the backend hits the OpenAI API, logs the interaction in tbl_inquiry_logs, and returns the response.
 
 ## POST /api/v1/chat/ask/
-Auth required (Student).
+Auth required (Student). Throttled: 20/min per student.
 
 Request:
 {
-  "message": "Pano mag apply ng scholarship?"
+  "message": "Pano mag apply ng scholarship?",
+  "office": 3,
+  "history": [
+    { "role": "user", "text": "whats the process of enrollment" },
+    { "role": "assistant", "text": "Enrollment Process for Freshmen..." }
+  ]
 }
+# message: required, max 1000 characters (400 under details.message).
+# office: optional - the office picked in the category selector.
+# history: optional - the current chat's earlier turns, oldest first (max 20;
+# the app sends the last 6) so follow-ups are understood in context.
+
 Response 200 (Successful AI Resolution):
 {
   "log_id": 5042,
   "detected_intent": "scholarship_requirements",
   "reply": "To apply for the academic scholarship, you must submit your Certificate of Registration...",
-  "is_escalated": false
+  "is_escalated": false,
+  "is_answer": true,
+  "suggested_questions": []
 }
 Response 201 (AI Failed, Ticket Escalation Triggered):
 {
@@ -195,8 +253,27 @@ Response 201 (AI Failed, Ticket Escalation Triggered):
   "detected_intent": "unresolved_complex_query",
   "reply": "I'm sorry, I couldn't find the exact procedure for that. I have automatically created a support ticket for you. An OSA staff member will review your concern shortly.",
   "is_escalated": true,
-  "ticket_id": 890
+  "is_answer": false,
+  "suggested_questions": [],
+  "ticket_id": 890,
+  "ticket_title": "Late Enrollment Fee Waiver"
 }
+# detected_intent is an FAQ's intent_keyword when answered, otherwise one of:
+#   conversational        - greeting/thanks/"is that all?" - short fixed reply, no ticket
+#   needs_clarification   - vague school question; suggested_questions holds up to 3 FAQ
+#                           questions to offer as buttons (sending one verbatim is answered directly)
+#   off_topic             - not about school - short scope reply, no ticket
+#   unclear               - gibberish - asks to rephrase, no ticket
+#   unresolved_complex_query - new ticket created (201)
+#   duplicate_ticket      - same concern as one of the student's open tickets (200);
+#                           no new ticket, ticket_id/ticket_title point to the existing one
+# is_answer: true only for FAQ answers - the only replies that can be rated.
+
+### PATCH /api/v1/chat/logs/{log_id}/feedback/
+Auth required (Student, own logs only - others 404).
+Request: { "feedback": "up" } or { "feedback": "down" }
+Response 200: { "feedback": "up" }
+Response 400 if the log isn't an FAQ answer (is_answer false).
 # GET /api/v1/inquiry-logs/
 Admin only. Returns raw logs for system analytics.
 {
@@ -214,8 +291,10 @@ Admin only. Returns raw logs for system analytics.
   "user_id": 1,
   "resolved_by": null,
   "log_id": 5043,
+  "title": "Late Enrollment Fee Waiver",
   "subject_category": "Unresolved Inquiry",
   "issue_description": "Student asked: 'Paano ko ma-waive ang late enrollment fee ko dahil sa medical emergency?' - AI could not resolve.",
+  "conversation_context": "Student: hi\nChatDesk: Hi! I can help with...\nStudent: Paano ko ma-waive...",
   "status": "pending",
   "resolution": null,
   "created_at": "2026-06-15T10:16:00Z",
@@ -225,13 +304,18 @@ Admin only. Returns raw logs for system analytics.
 # until an admin responds. Not on the original ERD - added post-Sprint-1-
 # baseline to fulfill the "add resolution notes" PATCH behavior already
 # described below; flagged for the team to fold into the next ERD revision.
+# title: short AI-generated label shown with the number ("Late Enrollment Fee
+# Waiver - Ticket #890"); "General Inquiry" if none could be generated. Admins
+# can edit it via PATCH. conversation_context: the chat turns right before an
+# AI escalation, read-only, empty for manual tickets. Neither is on the
+# original ERD - flagged for the next ERD revision.
 
 Method,Path,Roles,Notes
-GET,/api/v1/tickets/,admin,"List all tickets, supports ?status= and ?category= filters."
+GET,/api/v1/tickets/,admin,"List all tickets, supports ?status=, ?category= and ?search= (matches issue_description or title) filters."
 GET,/api/v1/tickets/?creator=me,student,Student's own escalated tickets.
 POST,/api/v1/tickets/,student,Manual ticket creation (if student bypasses AI).
 GET,/api/v1/tickets/{ticket_id}/,all,Detail view (students can only view their own).
-PATCH,/api/v1/tickets/{ticket_id}/,admin,"Update ticket status, assign resolved_by, or add resolution notes."
+PATCH,/api/v1/tickets/{ticket_id}/,admin,"Update ticket status, title, subject_category, or add resolution notes (resolved_by/resolved_at are set automatically on resolve)."
 
 ## Analytics (Admin Dashboard)
 
@@ -245,8 +329,28 @@ Admin only. Optional ?date_from=, ?date_to= (YYYY-MM-DD) to scope the range.
     { "intent": "scholarship_requirements", "count": 45 },
     { "intent": "unresolved_complex_query", "count": 34 }
   ],
+  "total_messages": 190,
+  "other_interactions": [
+    { "intent": "conversational", "count": 40 },
+    { "intent": "needs_clarification", "count": 12 },
+    { "intent": "off_topic", "count": 6 },
+    { "intent": "unclear", "count": 3 },
+    { "intent": "duplicate_ticket", "count": 1 }
+  ],
   "tickets_by_status": { "pending": 5, "active": 3, "resolved": 26 }
 }
+# total_inquiries / total_escalations / intent_frequencies count only real
+# questions (FAQ answers + escalations). Small talk, clarification prompts,
+# off-topic, gibberish and repeats of an open ticket are in other_interactions;
+# total_messages counts everything.
+
+## Other endpoint behavior notes
+- DELETE /api/v1/offices/{office_id}/ returns 400 (with a message) while the
+  office still has Office Admin accounts - reassign them first. An Office Admin
+  with no office gets 403 / empty results everywhere.
+- Phases may overlap. GET /api/v1/phases/current/ uses today's Manila date and,
+  when several phases are active, returns the most recently started one (the
+  shorter one on a tie).
 
 
 

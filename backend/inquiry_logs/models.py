@@ -1,6 +1,18 @@
 from django.conf import settings
 from django.db import models
 
+# detected_intent values the chatbot writes for anything that isn't an FAQ
+# answer. Every other detected_intent is an FAQ's intent_keyword.
+ESCALATED_INTENT = "unresolved_complex_query"
+DUPLICATE_TICKET_INTENT = "duplicate_ticket"
+CONVERSATIONAL_INTENT = "conversational"
+CLARIFICATION_INTENT = "needs_clarification"
+OFF_TOPIC_INTENT = "off_topic"
+UNCLEAR_INTENT = "unclear"
+# Small talk and housekeeping - not real inquiries for analytics purposes.
+NON_INQUIRY_INTENTS = (CONVERSATIONAL_INTENT, CLARIFICATION_INTENT, OFF_TOPIC_INTENT, UNCLEAR_INTENT)
+SYSTEM_INTENTS = (ESCALATED_INTENT, DUPLICATE_TICKET_INTENT, *NON_INQUIRY_INTENTS)
+
 
 class InquiryLog(models.Model):
     class Feedback(models.TextChoices):
@@ -35,3 +47,8 @@ class InquiryLog(models.Model):
 
     def __str__(self):
         return f"Log {self.log_id} ({self.detected_intent})"
+
+    @property
+    def is_answer(self):
+        """True when the reply was an FAQ's answer - the only replies worth rating."""
+        return self.detected_intent not in SYSTEM_INTENTS

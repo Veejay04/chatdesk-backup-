@@ -67,9 +67,11 @@ class User(AbstractUser):
     # Which office/college this account represents. Required for OFFICE_ADMIN
     # (enforced in serializers, not here, so students/superadmins can stay
     # null); every FAQ/Ticket queryset an Office Admin touches is scoped to
-    # this office.
+    # this office. PROTECT: deleting an office with staff would leave them with
+    # office=None, and every office-scoped filter would then match all
+    # *unassigned* rows instead of none.
     office = models.ForeignKey(
-        "offices.Office", on_delete=models.SET_NULL, null=True, blank=True,
+        "offices.Office", on_delete=models.PROTECT, null=True, blank=True,
         related_name="staff_members",
     )
     created_at = models.DateTimeField(auto_now_add=True)
@@ -100,11 +102,16 @@ class PasswordResetCode(models.Model):
     stored at rest.
     """
 
+    MAX_ATTEMPTS = 5
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_codes")
     code_hash = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     is_used = models.BooleanField(default=False)
+    # Wrong guesses against this code; it's burned at MAX_ATTEMPTS so a
+    # 6-digit code can't be brute-forced within its 10 minutes.
+    attempts = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         db_table = "tbl_password_reset_code"

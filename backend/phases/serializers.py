@@ -20,24 +20,7 @@ class SchoolPhaseSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"end_date": ["end_date must be on or after start_date."]}
             )
-
-        # CurrentPhaseView resolves "today's phase" with an unordered
-        # .first() - if two phases' date ranges overlapped, which one wins
-        # would be undefined. Block the overlap at write time instead.
-        overlapping = SchoolPhase.objects.filter(
-            start_date__lte=end_date, end_date__gte=start_date
-        )
-        if self.instance is not None:
-            overlapping = overlapping.exclude(pk=self.instance.pk)
-        conflict = overlapping.first()
-        if conflict:
-            raise serializers.ValidationError(
-                {
-                    "start_date": [
-                        f"Overlaps with existing phase \"{conflict.name}\" "
-                        f"({conflict.start_date} - {conflict.end_date})."
-                    ]
-                }
-            )
-
+        # Overlaps are allowed - real academic calendars overlap constantly
+        # (e.g. graduation applications during midterms). CurrentPhaseView
+        # picks deterministically when more than one is active.
         return attrs

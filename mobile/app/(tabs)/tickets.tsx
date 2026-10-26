@@ -60,8 +60,20 @@ export default function TicketsScreen() {
 
   const loadTickets = async () => {
     try {
-      const { data } = await axiosClient.get("/tickets/", { params: { creator: "me" } });
-      const rows: Ticket[] = data.results ?? data;
+      // The endpoint pages 20 at a time - follow `next` so older tickets (and
+      // the unread badge, which counts them) aren't silently cut off.
+      const rows: Ticket[] = [];
+      let nextUrl: string | null = "/tickets/";
+      while (nextUrl) {
+        const { data }: { data: { results?: Ticket[]; next?: string | null } | Ticket[] } =
+          await axiosClient.get(nextUrl);
+        if (Array.isArray(data)) {
+          rows.push(...data);
+          break;
+        }
+        rows.push(...(data.results ?? []));
+        nextUrl = data.next ?? null;
+      }
       setTickets(rows);
       setLoadFailed(false);
       updateBadgeFromTickets(rows);

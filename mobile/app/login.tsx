@@ -23,9 +23,11 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const { login, sessionExpired } = useAuth();
+  const [errorMessage, setErrorMessage] = useState(
+    sessionExpired ? "Your session expired. Please log in again." : ""
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { login } = useAuth();
 
   const handleLogin = async () => {
     setErrorMessage("");
@@ -34,7 +36,13 @@ export default function LoginScreen() {
       await login(email, password);
       router.replace("/");
     } catch (error: any) {
-      setErrorMessage(error.response?.data?.message || "Invalid email or password.");
+      // Login errors (wrong password, unverified email) arrive under
+      // details.non_field_errors; data.message is only the generic
+      // "Invalid request parameters." Rate limits come as data.message.
+      const data = error.response?.data;
+      setErrorMessage(
+        data?.details?.non_field_errors?.[0] || data?.message || "Can't reach ChatDesk right now. Please try again."
+      );
     } finally {
       setIsSubmitting(false);
     }

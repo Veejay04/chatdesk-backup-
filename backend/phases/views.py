@@ -1,5 +1,5 @@
-from datetime import date
-
+from django.db.models import F
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -33,13 +33,17 @@ class CurrentPhaseView(APIView):
     fallback if no phase is currently defined."""
 
     def get(self, request):
-        today = date.today()
-        # Ordered defensively: validation blocks new overlapping phases, but
-        # if any ever slip through, the most recently-started one wins
-        # deterministically rather than depending on undefined row order.
-        phase = SchoolPhase.objects.filter(
-            start_date__lte=today, end_date__gte=today
-        ).order_by("-start_date").first()
+        # Manila date (settings.TIME_ZONE), not the server OS clock - a UTC
+        # host would otherwise flip phases 8 hours late.
+        today = timezone.localdate()
+        # Phases may overlap: the most recently started wins (it's the newer
+        # event), and on a tie the shorter, more specific one.
+        phase = (
+            SchoolPhase.objects.filter(start_date__lte=today, end_date__gte=today)
+            .annotate(length=F("end_date") - F("start_date"))
+            .order_by("-start_date", "length", "phase_id")
+            .first()
+        )
         if phase is None:
             return Response({
                 "phase_id": None,
@@ -56,7 +60,7 @@ class PhaseExtractView(APIView):
     (multipart field "file"), get back candidate phases for review -
     nothing is saved here. Confirmed candidates get created individually
     through the existing POST /api/v1/phases/ endpoint, so they still go
-    through its overlap validation.
+    through its date validation.
     """
 
     permission_classes = [IsAdminOrReadOnly]

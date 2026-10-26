@@ -10,6 +10,8 @@ export type ChatMessage = {
   // came from, needed to submit thumbs up/down feedback on it.
   logId?: number;
   feedback?: "up" | "down" | null;
+  // Only FAQ answers can be rated - not greetings, "rephrase" prompts, etc.
+  canRate?: boolean;
   // Set when this reply created a ticket or pointed to an already-open one.
   ticketId?: number;
   ticketTitle?: string;
@@ -125,15 +127,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           text: data.reply,
           logId: data.log_id,
           feedback: null,
+          canRate: Boolean(data.is_answer),
           ...(data.ticket_id ? { ticketId: data.ticket_id, ticketTitle: data.ticket_title } : {}),
           ...(data.suggested_questions?.length ? { suggestions: data.suggested_questions } : {}),
         },
       ]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: "Chat isn't available yet - please check back soon." },
-      ]);
+    } catch (error: any) {
+      const status = error.response?.status;
+      const data = error.response?.data;
+      let text = "Can't reach ChatDesk right now. Please check your connection and try again.";
+      if (status === 429) {
+        text = "You're sending messages too quickly. Please wait a moment and try again.";
+      } else if (status === 400 && data?.details?.message?.[0]) {
+        text = data.details.message[0];
+      } else if (status === 401) {
+        text = "Your session expired. Please log in again.";
+      }
+      setMessages((prev) => [...prev, { role: "assistant", text }]);
     } finally {
       setIsSending(false);
     }

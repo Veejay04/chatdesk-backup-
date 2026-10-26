@@ -153,6 +153,7 @@ export default function AnalyticsOverview() {
             subtitle="What students are asking about most"
           />
           <IntentFrequencyChart items={data.intent_frequencies} />
+          <OtherInteractions items={data.other_interactions} />
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm lg:col-span-2">
@@ -223,6 +224,38 @@ function IntentFrequencyChart({ items }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const OTHER_INTERACTION_LABELS = {
+  conversational: "Small talk",
+  needs_clarification: "Asked to clarify",
+  off_topic: "Off-topic",
+  unclear: "Unclear",
+  duplicate_ticket: "Repeat of open ticket",
+};
+
+// Chat turns that aren't new questions - kept out of the topic chart and the
+// inquiry total, but still worth seeing (e.g. a high off-topic count).
+function OtherInteractions({ items }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="mt-6 border-t border-gray-100 pt-4">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+        Other chatbot interactions (not counted as inquiries)
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <span
+            key={item.intent}
+            className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-600"
+          >
+            {OTHER_INTERACTION_LABELS[item.intent] ?? humanizeIntent(item.intent)}{" "}
+            <span className="font-semibold tabular-nums text-navy">{item.count}</span>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

@@ -53,10 +53,24 @@ axiosClient.interceptors.response.use(
           refresh: refreshToken,
         });
         localStorage.setItem("chatdesk_access_token", data.access);
+        // The backend rotates refresh tokens and blacklists the old one, so
+        // the new one must be kept or the next refresh fails (~30 min logout).
+        if (data.refresh) {
+          localStorage.setItem("chatdesk_refresh_token", data.refresh);
+        }
         resolvePendingRequests(data.access);
         originalRequest.headers.Authorization = `Bearer ${data.access}`;
         return axiosClient(originalRequest);
       } catch (refreshError) {
+        // Another tab may have rotated the token at the same moment - if a
+        // newer one is already stored, retry with it instead of logging out.
+        const latestRefresh = localStorage.getItem("chatdesk_refresh_token");
+        const latestAccess = localStorage.getItem("chatdesk_access_token");
+        if (latestRefresh && latestRefresh !== refreshToken && latestAccess) {
+          resolvePendingRequests(latestAccess);
+          originalRequest.headers.Authorization = `Bearer ${latestAccess}`;
+          return axiosClient(originalRequest);
+        }
         localStorage.removeItem("chatdesk_access_token");
         localStorage.removeItem("chatdesk_refresh_token");
         window.location.href = "/login";

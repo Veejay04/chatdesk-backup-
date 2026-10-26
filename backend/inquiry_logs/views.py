@@ -1,14 +1,17 @@
+from django.db import transaction
 from django.db.models import Q
 from rest_framework import generics, status
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tickets.services import create_ticket_from_log
+from users.models import User
 from users.permissions import IsOfficeStaff, IsStudent
 
-from .models import InquiryLog
+from .models import ESCALATED_INTENT, InquiryLog
 from .serializers import ChatAskSerializer, InquiryLogFeedbackSerializer, InquiryLogSerializer
-from .services import ESCALATED_INTENT, classify_message, format_turns
+from .services import classify_message, duplicate_result, exact_repeat_ticket, format_turns
 
 
 class ChatAskView(APIView):
@@ -17,6 +20,8 @@ class ChatAskView(APIView):
     new ticket - whichever classify_message decided."""
 
     permission_classes = [IsStudent]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "chat"
 
     def post(self, request):
         serializer = ChatAskSerializer(data=request.data)
@@ -25,43 +30,51 @@ class ChatAskView(APIView):
         office = serializer.validated_data.get("office")
         history = serializer.validated_data.get("history")
 
+        # The AI call (~seconds) stays outside the transaction/lock.
         result = classify_message(message, office=office, history=history, user=request.user)
 
-        log = InquiryLog.objects.create(
-            user=request.user,
-            office=office,
-            user_message=message,
-            detected_intent=result["detected_intent"],
-            chatbot_response=result["reply"],
-            is_escalated=result["detected_intent"] == ESCALATED_INTENT,
-        )
+        with transaction.atomic():
+            ticket = None
+            if result["detected_intent"] == ESCALATED_INTENT:
+                # Serialize this student's escalations: a second request that
+                # raced past classify_message's duplicate check waits here,
+                # then sees the first request's ticket.
+                User.objects.select_for_update().filter(pk=request.user.pk).first()
+                repeat = exact_repeat_ticket(request.user, message)
+                if repeat is not None:
+                    result = duplicate_result(repeat)
+
+            log = InquiryLog.objects.create(
+                user=request.user,
+                office=office,
+                user_message=message,
+                detected_intent=result["detected_intent"],
+                chatbot_response=result["reply"],
+                is_escalated=result["detected_intent"] == ESCALATED_INTENT,
+            )
+            if log.is_escalated:
+                context = format_turns(history)
+                ticket = create_ticket_from_log(
+                    log,
+                    office=office,
+                    title=result["ticket_title"],
+                    conversation_context=f"{context}\nStudent: {message}" if context else "",
+                )
 
         payload = {
             "log_id": log.log_id,
             "detected_intent": log.detected_intent,
             "reply": log.chatbot_response,
             "is_escalated": log.is_escalated,
+            "is_answer": log.is_answer,
             "suggested_questions": result.get("suggested_questions", []),
         }
+        linked_ticket = ticket or result.get("existing_ticket")
+        if linked_ticket is not None:
+            payload["ticket_id"] = linked_ticket.ticket_id
+            payload["ticket_title"] = linked_ticket.title
 
-        existing_ticket = result.get("existing_ticket")
-        if existing_ticket is not None:
-            payload["ticket_id"] = existing_ticket.ticket_id
-            payload["ticket_title"] = existing_ticket.title
-
-        if log.is_escalated:
-            context = format_turns(history)
-            ticket = create_ticket_from_log(
-                log,
-                office=office,
-                title=result["ticket_title"],
-                conversation_context=f"{context}\nStudent: {message}" if context else "",
-            )
-            payload["ticket_id"] = ticket.ticket_id
-            payload["ticket_title"] = ticket.title
-            return Response(payload, status=status.HTTP_201_CREATED)
-
-        return Response(payload, status=status.HTTP_200_OK)
+        return Response(payload, status=status.HTTP_201_CREATED if ticket else status.HTTP_200_OK)
 
 
 class InquiryLogFeedbackView(generics.UpdateAPIView):

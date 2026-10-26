@@ -9,10 +9,12 @@ export default function FaqFormModal({ initialFaq, offices, hideOfficeField, onS
   const [category, setCategory] = useState(initialFaq?.category ?? CATEGORIES[0]);
   const [office, setOffice] = useState(initialFaq?.office ?? "");
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSaving(true);
+    setSaveError(null);
     try {
       await onSave({
         intent_keyword: intentKeyword,
@@ -22,6 +24,10 @@ export default function FaqFormModal({ initialFaq, offices, hideOfficeField, onS
         office: office || null,
       });
       onClose();
+    } catch (err) {
+      const data = err.response?.data;
+      const fieldMessages = Object.values(data?.details ?? {}).flat();
+      setSaveError(fieldMessages.length ? fieldMessages.join(" ") : data?.message ?? "Could not save this FAQ.");
     } finally {
       setIsSaving(false);
     }
@@ -87,6 +93,12 @@ export default function FaqFormModal({ initialFaq, offices, hideOfficeField, onS
               ))}
             </select>
           </>
+        )}
+
+        {saveError && (
+          <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+            {saveError}
+          </p>
         )}
 
         <div className="flex justify-end gap-3">

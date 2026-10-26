@@ -1,6 +1,12 @@
+from io import BytesIO
+
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.base import ContentFile
+from PIL import Image, ImageOps
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -8,6 +14,9 @@ from offices.models import Office
 
 from .models import User
 from .services import send_verification_email
+
+PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024
+PROFILE_PICTURE_MAX_SIDE = 512
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -62,6 +71,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         value = value.lower().strip()
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("An account with this email already exists.")
+        allowed = settings.ALLOWED_EMAIL_DOMAINS
+        if allowed and value.rsplit("@", 1)[-1] not in allowed:
+            raise serializers.ValidationError(
+                f"Please register with your school email ({', '.join('@' + d for d in allowed)})."
+            )
         return value
 
     def validate_school_id(self, value):
@@ -69,6 +83,20 @@ class RegisterSerializer(serializers.ModelSerializer):
         if User.objects.filter(school_id__iexact=value).exists():
             raise serializers.ValidationError("An account with this School ID already exists.")
         return value
+
+    def validate(self, attrs):
+        # Same rules password reset already enforces (common, all-numeric,
+        # too similar to the name/email) - not just the 8-character minimum.
+        candidate = User(
+            email=attrs.get("email", ""),
+            first_name=attrs.get("first_name", ""),
+            last_name=attrs.get("last_name", ""),
+        )
+        try:
+            validate_password(attrs["password"], user=candidate)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": list(error.messages)})
+        return attrs
 
     def create(self, validated_data):
         validated_data["role"] = User.Role.STUDENT
@@ -78,12 +106,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
 
-        request = self.context.get("request")
-        # Dev-only: no real Gmail App Password configured yet, so the link
-        # can't actually be emailed - stash it to surface in the response
-        # instead (dev_verify_url), same pattern as the password-reset flow.
-        dev_verify_url = send_verification_email(user, request)
-        user._dev_verify_url = dev_verify_url
+        # Raises EmailDeliveryError if Gmail fails - RegisterView runs this in
+        # a transaction so the account is rolled back rather than left
+        # half-created. Returns the link only in the DEBUG no-email fallback.
+        user._dev_verify_url = send_verification_email(user, self.context.get("request"))
         return user
 
     def to_representation(self, instance):
@@ -121,6 +147,15 @@ class LoginSerializer(serializers.Serializer):
             if existing and existing.check_password(attrs["password"]) and not existing.is_active:
                 raise serializers.ValidationError("This account has been deactivated.")
             raise serializers.ValidationError("Invalid email or password.")
+        if (
+            settings.REQUIRE_EMAIL_VERIFICATION
+            and user.role == User.Role.STUDENT
+            and not user.is_email_verified
+        ):
+            raise serializers.ValidationError(
+                "Please verify your email address first - check your inbox for the link, "
+                "or request a new one."
+            )
         update_last_login(None, user)
         attrs["user"] = user
         return attrs
@@ -135,6 +170,15 @@ class LoginSerializer(serializers.Serializer):
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     """POST /api/v1/auth/password-reset/request/ - public."""
+
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower().strip()
+
+
+class VerificationResendSerializer(serializers.Serializer):
+    """POST /api/v1/auth/verify-email/resend/ - public."""
 
     email = serializers.EmailField()
 
@@ -167,6 +211,21 @@ class UserSelfUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["first_name", "last_name", "profile_picture"]
+
+    def validate_profile_picture(self, image):
+        if image is None:
+            return image
+        if image.size > PROFILE_PICTURE_MAX_BYTES:
+            raise serializers.ValidationError("Profile picture must be 2 MB or smaller.")
+        # Avatars render at ~30-100px - storing a phone camera's full-size
+        # photo just makes every avatar load slow.
+        picture = Image.open(image)
+        picture = ImageOps.exif_transpose(picture).convert("RGB")
+        picture.thumbnail((PROFILE_PICTURE_MAX_SIDE, PROFILE_PICTURE_MAX_SIDE))
+        buffer = BytesIO()
+        picture.save(buffer, format="JPEG", quality=85)
+        base_name = (image.name or "avatar").rsplit(".", 1)[0]
+        return ContentFile(buffer.getvalue(), name=f"{base_name}.jpg")
 
 
 class UserAdminUpdateSerializer(serializers.ModelSerializer):

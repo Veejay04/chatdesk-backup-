@@ -43,6 +43,8 @@ class TicketListCreateView(generics.ListCreateAPIView):
             return qs
 
         if user.role == user.Role.OFFICE_ADMIN:
+            if user.office_id is None:
+                return qs.none()
             qs = qs.filter(office=user.office)
             if status_param:
                 qs = qs.filter(status=status_param)
@@ -87,6 +89,8 @@ class TicketDetailView(generics.RetrieveUpdateAPIView):
         if user.role == user.Role.SUPERADMIN:
             return Ticket.objects.all()
         if user.role == user.Role.OFFICE_ADMIN:
+            if user.office_id is None:
+                return Ticket.objects.none()
             return Ticket.objects.filter(office=user.office)
         return Ticket.objects.filter(user=user)
 
