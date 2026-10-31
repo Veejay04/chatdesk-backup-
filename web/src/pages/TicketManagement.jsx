@@ -1,5 +1,4 @@
 import { Fragment, useEffect, useState } from "react";
-import { getColleges } from "../api/colleges.js";
 import { getTickets, updateTicket } from "../api/tickets.js";
 import { getOffices } from "../api/offices.js";
 import FieldError, { invalidInput } from "../components/FieldError.jsx";
@@ -37,7 +36,6 @@ export default function TicketManagement() {
   const [resolvedCount, setResolvedCount] = useState(0);
   const [aiCount, setAiCount] = useState(0);
   const [offices, setOffices] = useState([]);
-  const [colleges, setColleges] = useState([]);
   const [knownCategories, setKnownCategories] = useState(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -45,7 +43,6 @@ export default function TicketManagement() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [officeFilter, setOfficeFilter] = useState("All");
-  const [collegeFilter, setCollegeFilter] = useState("All");
   const [sourceFilter, setSourceFilter] = useState("staff");
   const [statusFilter, setStatusFilter] = useState("All");
   const [page, setPage] = useState(1);
@@ -63,7 +60,6 @@ export default function TicketManagement() {
       search: debouncedSearch || undefined,
       category: categoryFilter === "All" ? undefined : categoryFilter,
       office: officeFilter === "All" ? undefined : officeFilter,
-      college: collegeFilter === "All" ? undefined : collegeFilter,
       source: sourceFilter === "all" ? undefined : sourceFilter,
       status: statusFilter === "All" ? undefined : statusFilter,
     })
@@ -110,20 +106,17 @@ export default function TicketManagement() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, statusFilter, categoryFilter, officeFilter, collegeFilter, sourceFilter]);
+  }, [debouncedSearch, statusFilter, categoryFilter, officeFilter, sourceFilter]);
 
   useEffect(() => {
     loadTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, statusFilter, categoryFilter, officeFilter, collegeFilter, sourceFilter]);
+  }, [page, debouncedSearch, statusFilter, categoryFilter, officeFilter, sourceFilter]);
 
   useEffect(() => {
     loadCounts();
     getOffices()
       .then((res) => setOffices(res.data.results ?? res.data))
-      .catch(() => {});
-    getColleges()
-      .then((res) => setColleges(res.data))
       .catch(() => {});
   }, []);
 
@@ -301,12 +294,6 @@ export default function TicketManagement() {
             <option key={category} value={category}>{category}</option>
           ))}
         </select>
-        <select value={collegeFilter} onChange={(e) => setCollegeFilter(e.target.value)} aria-label="College" className={SELECT_CLASS}>
-          <option value="All">All Colleges</option>
-          {colleges.map((college) => (
-            <option key={college.key} value={college.key}>{college.name}</option>
-          ))}
-        </select>
         {!isOfficeAdmin && (
           <select value={officeFilter} onChange={(e) => setOfficeFilter(e.target.value)} aria-label="Office" className={SELECT_CLASS}>
             <option value="All">All Offices</option>
@@ -364,7 +351,7 @@ export default function TicketManagement() {
                         <td className="px-5 py-3.5">
                           <div className="max-w-[14rem] truncate text-sm">{ticket.user_email}</div>
                           <div className="truncate text-xs text-gray-400">
-                            {[ticket.student_course, ticket.student_college].filter(Boolean).join(" · ") || "Student"}
+                            {ticket.student_course || "Student"}
                           </div>
                         </td>
                         <td className="px-5 py-3.5 text-sm text-gray-500">{ticket.subject_category}</td>

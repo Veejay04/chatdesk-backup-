@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { getAnalyticsOverview } from "../api/analytics.js";
-import { getColleges } from "../api/colleges.js";
 import { getOffices } from "../api/offices.js";
 import { ErrorState, LoadingState } from "../components/PageState.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -24,19 +23,16 @@ export default function AnalyticsOverview() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [officeFilter, setOfficeFilter] = useState("");
-  const [collegeFilter, setCollegeFilter] = useState("");
   const [offices, setOffices] = useState([]);
-  const [colleges, setColleges] = useState([]);
 
   const loadData = (overrides = {}) => {
-    const filters = { dateFrom, dateTo, officeFilter, collegeFilter, ...overrides };
+    const filters = { dateFrom, dateTo, officeFilter, ...overrides };
     setIsLoading(true);
     setError(null);
     const params = {};
     if (filters.dateFrom) params.date_from = filters.dateFrom;
     if (filters.dateTo) params.date_to = filters.dateTo;
     if (filters.officeFilter) params.office = filters.officeFilter;
-    if (filters.collegeFilter) params.college = filters.collegeFilter;
 
     getAnalyticsOverview(params)
       .then(setData)
@@ -46,9 +42,6 @@ export default function AnalyticsOverview() {
 
   useEffect(() => {
     loadData();
-    getColleges()
-      .then((res) => setColleges(res.data))
-      .catch(() => {});
     if (!isOfficeAdmin) {
       getOffices()
         .then((res) => setOffices(res.data.results ?? res.data))
@@ -66,8 +59,7 @@ export default function AnalyticsOverview() {
     setDateFrom("");
     setDateTo("");
     setOfficeFilter("");
-    setCollegeFilter("");
-    loadData({ dateFrom: "", dateTo: "", officeFilter: "", collegeFilter: "" });
+    loadData({ dateFrom: "", dateTo: "", officeFilter: "" });
   };
 
   if (isLoading && !data) return <LoadingState label="Loading analytics..." />;
@@ -112,15 +104,6 @@ export default function AnalyticsOverview() {
             </select>
           </div>
         )}
-        <div>
-          <label htmlFor="analytics-college" className="mb-1 block text-sm text-gray-500">College</label>
-          <select id="analytics-college" value={collegeFilter} onChange={(e) => setCollegeFilter(e.target.value)} className={FILTER_CLASS}>
-            <option value="">All Colleges</option>
-            {colleges.map((college) => (
-              <option key={college.key} value={college.key}>{college.name}</option>
-            ))}
-          </select>
-        </div>
         <button
           type="submit"
           className="rounded-full bg-navy px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:brightness-110"

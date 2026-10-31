@@ -24,16 +24,17 @@ export default function UserFormModal({ initialUser, offices, onSave, onClose })
   const [schoolId, setSchoolId] = useState(initialUser?.school_id ?? "");
   const [office, setOffice] = useState(initialUser?.office ?? "");
   const [isActive, setIsActive] = useState(initialUser?.is_active ?? true);
-  const [colleges, setColleges] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Same course list the backend accepts, grouped by college.
+  // The exact course list the backend accepts (served by /colleges/, which
+  // groups them - shown here as one flat list).
   useEffect(() => {
     getColleges()
-      .then((res) => setColleges(res.data))
-      .catch(() => setColleges([]));
+      .then((res) => setCourses(res.data.flatMap((group) => group.courses)))
+      .catch(() => setCourses([]));
   }, []);
 
   const validate = () => ({
@@ -196,12 +197,8 @@ export default function UserFormModal({ initialUser, offices, onSave, onClose })
                 className={`${FIELD_CLASS} ${invalidInput(errors.course)}`}
               >
                 <option value="" disabled>Select a course</option>
-                {colleges.map((college) => (
-                  <optgroup key={college.key} label={college.name}>
-                    {college.courses.map((c) => (
-                      <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                    ))}
-                  </optgroup>
+                {courses.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
                 ))}
               </select>
               <FieldError message={errors.course} />

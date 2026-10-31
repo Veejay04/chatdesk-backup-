@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { getColleges } from "../api/colleges.js";
 import { getInquiryLogs } from "../api/inquiryLogs.js";
 import { getOffices } from "../api/offices.js";
 import Pagination from "../components/Pagination.jsx";
@@ -14,9 +13,7 @@ export default function InquiryLogs() {
   const { currentUser } = useAuth();
   const isOfficeAdmin = currentUser?.role === "office_admin";
   const [offices, setOffices] = useState([]);
-  const [colleges, setColleges] = useState([]);
   const [officeFilter, setOfficeFilter] = useState("");
-  const [collegeFilter, setCollegeFilter] = useState("");
   const [logs, setLogs] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [escalatedCount, setEscalatedCount] = useState(0);
@@ -38,7 +35,6 @@ export default function InquiryLogs() {
       intent: intentFilter || undefined,
       user_id: debouncedUserFilter || undefined,
       office: officeFilter || undefined,
-      college: collegeFilter || undefined,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
     })
@@ -75,18 +71,15 @@ export default function InquiryLogs() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intentFilter, debouncedUserFilter, officeFilter, collegeFilter, dateFrom, dateTo]);
+  }, [intentFilter, debouncedUserFilter, officeFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     loadLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, intentFilter, debouncedUserFilter, officeFilter, collegeFilter, dateFrom, dateTo]);
+  }, [page, intentFilter, debouncedUserFilter, officeFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     loadEscalatedCount();
-    getColleges()
-      .then((res) => setColleges(res.data))
-      .catch(() => {});
     if (!isOfficeAdmin) {
       getOffices()
         .then((res) => setOffices(res.data.results ?? res.data))
@@ -98,7 +91,6 @@ export default function InquiryLogs() {
     setIntentFilter("");
     setUserFilter("");
     setOfficeFilter("");
-    setCollegeFilter("");
     setDateFrom("");
     setDateTo("");
   };
@@ -162,12 +154,6 @@ export default function InquiryLogs() {
             ))}
           </select>
         )}
-        <select value={collegeFilter} onChange={(e) => setCollegeFilter(e.target.value)} aria-label="College" className={FILTER_CLASS}>
-          <option value="">All Colleges</option>
-          {colleges.map((college) => (
-            <option key={college.key} value={college.key}>{college.name}</option>
-          ))}
-        </select>
         <input
           type="text"
           inputMode="numeric"
@@ -232,9 +218,6 @@ export default function InquiryLogs() {
                 >
                   <td className="px-5 py-3.5 text-gray-500">
                     <div>#{log.user_id}</div>
-                    {log.student_college && (
-                      <div className="max-w-[10rem] truncate text-xs text-gray-400">{log.student_college}</div>
-                    )}
                   </td>
                   <td className="max-w-sm px-5 py-3.5">
                     <div className="truncate">{log.user_message}</div>
