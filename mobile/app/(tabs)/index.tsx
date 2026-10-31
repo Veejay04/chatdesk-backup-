@@ -18,6 +18,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import type { ScrollViewInstance } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BrandTitle } from "../../components/brand-title";
 import { NavMenu } from "../../components/nav-menu";
@@ -72,7 +73,7 @@ export default function StudentChatScreen() {
   const [phase, setPhase] = useState<Phase | null>(null);
   const [isPhaseBannerDismissed, setIsPhaseBannerDismissed] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<ScrollViewInstance>(null);
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>(FALLBACK_SUGGESTED_QUESTIONS);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";

@@ -10,6 +10,10 @@ import { useTicketBadge } from "../../context/TicketBadgeContext";
 export default function TabsLayout() {
   const { colors } = useTheme();
   const { unseenCount } = useTicketBadge();
+  // Same colors as the tint options below. Taken from the theme rather than
+  // the tab bar's `color` arg, whose type (RN 0.88 ColorValue) the icon
+  // library doesn't accept.
+  const tabIconColor = (focused: boolean) => (focused ? colors.accentText : colors.textMuted);
 
   return (
     <Tabs
@@ -33,15 +37,17 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Chat",
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="chat-bubble-outline" size={size} color={color} />,
+          tabBarIcon: ({ focused, size }) => (
+            <MaterialIcons name="chat-bubble-outline" size={size} color={tabIconColor(focused)} />
+          ),
         }}
       />
       <Tabs.Screen
         name="tickets"
         options={{
           title: "Tickets",
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="confirmation-number" size={size} color={color} />
+          tabBarIcon: ({ focused, size }) => (
+            <MaterialIcons name="confirmation-number" size={size} color={tabIconColor(focused)} />
           ),
           tabBarBadge: unseenCount > 0 ? unseenCount : undefined,
           tabBarBadgeStyle: { backgroundColor: colors.errorRed },
@@ -51,7 +57,9 @@ export default function TabsLayout() {
         name="announcements"
         options={{
           title: "Announcements",
-          tabBarIcon: ({ color, size }) => <MaterialIcons name="campaign" size={size} color={color} />,
+          tabBarIcon: ({ focused, size }) => (
+            <MaterialIcons name="campaign" size={size} color={tabIconColor(focused)} />
+          ),
         }}
       />
     </Tabs>
