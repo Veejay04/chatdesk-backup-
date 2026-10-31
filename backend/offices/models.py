@@ -1,5 +1,7 @@
 from django.db import models
 
+from .codes import suggest_code, unique_code
+
 
 class Office(models.Model):
     """
@@ -13,6 +15,10 @@ class Office(models.Model):
 
     office_id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=150, unique=True)
+    # Short uppercase code that starts every ticket code from this office
+    # (e.g. "OSA" -> OSA103126001). Editable by Super Admin; existing ticket
+    # codes keep whatever code they were created with.
+    code = models.CharField(max_length=10, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -21,3 +27,9 @@ class Office(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            taken = set(Office.objects.exclude(pk=self.pk).values_list("code", flat=True))
+            self.code = unique_code(suggest_code(self.name), taken)
+        super().save(*args, **kwargs)

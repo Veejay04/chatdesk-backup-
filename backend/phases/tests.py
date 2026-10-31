@@ -60,3 +60,11 @@ class PhaseTests(BaseAPITestCase):
         self.assertIsNone(self.current()["phase_id"])
         phase("Ends Today", -10, 0)
         self.assertEqual(self.current()["name"], "Ends Today")
+
+    def test_suggested_questions_are_cleaned_and_limited(self):
+        superadmin = self.client_for(self.make_user("super@example.com", role=User.Role.SUPERADMIN))
+        base = {"name": "Exams", "start_date": str(TODAY), "end_date": str(TODAY), "guidance_message": ""}
+        ok = superadmin.post("/api/v1/phases/", {**base, "suggested_questions": ["  When are exams? ", ""]}, format="json")
+        self.assertEqual(ok.data["suggested_questions"], ["When are exams?"])
+        too_many = superadmin.post("/api/v1/phases/", {**base, "suggested_questions": ["q"] * 6}, format="json")
+        self.assertEqual(too_many.status_code, 400)

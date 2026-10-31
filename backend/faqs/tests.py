@@ -56,3 +56,9 @@ class PopularFaqTests(BaseAPITestCase):
         data = self.client_for(student).get("/api/v1/faqs/popular/").data
         self.assertEqual(len(data), 3)
         self.assertEqual(data[0]["question_text"], "Question c_faq?")
+
+    def test_intent_keyword_must_have_no_spaces(self):
+        superadmin = self.client_for(self.make_user("super@example.com", role=User.Role.SUPERADMIN))
+        response = superadmin.post("/api/v1/faqs/", faq_payload(intent_keyword="lost school id"), format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("intent_keyword", response.data["details"])

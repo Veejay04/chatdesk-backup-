@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .colleges import college_list
 from .models import PasswordResetCode, User
 from .permissions import IsAdmin
 from .serializers import (
@@ -342,6 +343,16 @@ class VerifyEmailView(APIView):
         return _verify_email_page(
             "Email verified", "Your email address has been verified. You can now log in.", True
         )
+
+
+class CollegeListView(APIView):
+    """GET /api/v1/colleges/ - any authenticated user. Colleges and the
+    course codes in each, for the college filters (not paginated)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(college_list())
 
 
 class UserListCreateView(generics.ListCreateAPIView):

@@ -13,7 +13,16 @@ import {
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { AuthHeader } from "../components/auth-header";
+import { FieldError } from "../components/field-error";
 import axiosClient from "../lib/axiosClient";
+import {
+  type FieldErrors,
+  hasErrors,
+  serverFieldErrors,
+  validateEmail,
+  validateNewPassword,
+  validateResetCode,
+} from "../lib/validation";
 import { useTheme } from "../context/ThemeContext";
 import type { ThemePalette } from "../theme/colors";
 
@@ -32,13 +41,18 @@ export default function ForgotPasswordScreen() {
   const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
   const [infoMessage, setInfoMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const invalid = (field: string) => (fieldErrors[field] ? { borderColor: colors.errorRed } : null);
 
   const handleRequestCode = async () => {
     setErrorMessage("");
+    const found: FieldErrors = { email: validateEmail(email) };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
     setIsSubmitting(true);
     try {
-      const { data } = await axiosClient.post("/auth/password-reset/request/", { email });
+      const { data } = await axiosClient.post("/auth/password-reset/request/", { email: email.trim() });
       // dev_code only appears while the backend's Gmail App Password isn't
       // configured yet (see backend/.env) - it's the code shown directly
       // here instead of being emailed. Remove this once real email is on.
@@ -50,7 +64,8 @@ export default function ForgotPasswordScreen() {
       }
       setStep("confirm");
     } catch (error: any) {
-      setErrorMessage(error.response?.data?.message || "Unable to send a reset code right now.");
+      const { general } = serverFieldErrors(error, "Unable to send a reset code right now.");
+      setErrorMessage(general ?? "Unable to send a reset code right now.");
     } finally {
       setIsSubmitting(false);
     }
@@ -58,22 +73,27 @@ export default function ForgotPasswordScreen() {
 
   const handleConfirmReset = async () => {
     setErrorMessage("");
-    if (newPassword !== confirmPassword) {
-      setErrorMessage("Passwords do not match.");
-      return;
-    }
+    const found: FieldErrors = {
+      code: validateResetCode(code),
+      new_password: validateNewPassword(newPassword),
+      confirm_password: newPassword === confirmPassword ? null : "Passwords do not match.",
+    };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
     setIsSubmitting(true);
     try {
       await axiosClient.post("/auth/password-reset/confirm/", {
-        email,
-        code,
+        email: email.trim(),
+        code: code.trim(),
         new_password: newPassword,
       });
       router.replace("/login");
     } catch (error: any) {
-      const details = error.response?.data?.details;
-      const firstDetail = details ? (Object.values(details)[0] as string[])?.[0] : null;
-      setErrorMessage(firstDetail || error.response?.data?.message || "Unable to reset password right now.");
+      // e.g. "This password is too common." under new_password, or
+      // "Invalid or expired code." under code.
+      const { fields, general } = serverFieldErrors(error, "Unable to reset password right now.");
+      setFieldErrors(fields);
+      setErrorMessage(general ?? "");
     } finally {
       setIsSubmitting(false);
     }
@@ -100,7 +120,7 @@ export default function ForgotPasswordScreen() {
           <>
             <Text style={styles.label}>Email</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, invalid("email")]}
               placeholder="you@ustp.edu.ph"
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
@@ -108,6 +128,7 @@ export default function ForgotPasswordScreen() {
               value={email}
               onChangeText={setEmail}
             />
+            <FieldError message={fieldErrors.email} />
 
             {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
@@ -132,17 +153,18 @@ export default function ForgotPasswordScreen() {
 
             <Text style={styles.label}>6-digit code</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, invalid("code")]}
               placeholder="123456"
               placeholderTextColor={colors.textMuted}
               keyboardType="number-pad"
               maxLength={6}
               value={code}
-              onChangeText={setCode}
+              onChangeText={(value) => setCode(value.replace(/\D/g, ""))}
             />
+            <FieldError message={fieldErrors.code} />
 
             <Text style={styles.label}>New password</Text>
-            <View style={styles.passwordField}>
+            <View style={[styles.passwordField, invalid("new_password")]}>
               <TextInput
                 style={styles.passwordInput}
                 placeholder="••••••••"
@@ -165,9 +187,10 @@ export default function ForgotPasswordScreen() {
                 />
               </Pressable>
             </View>
+            <FieldError message={fieldErrors.new_password} />
 
             <Text style={styles.label}>Confirm new password</Text>
-            <View style={styles.passwordField}>
+            <View style={[styles.passwordField, invalid("confirm_password")]}>
               <TextInput
                 style={styles.passwordInput}
                 placeholder="••••••••"
@@ -190,6 +213,7 @@ export default function ForgotPasswordScreen() {
                 />
               </Pressable>
             </View>
+            <FieldError message={fieldErrors.confirm_password} />
 
             {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 

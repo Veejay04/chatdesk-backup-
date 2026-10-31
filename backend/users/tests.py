@@ -239,3 +239,47 @@ class ProfilePictureTests(BaseAPITestCase):
         response = self.upload(noise)
         self.assertEqual(response.status_code, 400)
         self.assertIn("2 MB", response.data["details"]["profile_picture"][0])
+
+
+class CollegeTests(BaseAPITestCase):
+    def test_every_course_belongs_to_exactly_one_college(self):
+        from .colleges import COLLEGES
+
+        grouped = [course for college in COLLEGES for course in college["courses"]]
+        self.assertEqual(sorted(grouped), sorted(code for code, _ in User.Course.choices))
+
+    def test_college_list_endpoint(self):
+        client = self.client_for(self.make_user("student@example.com"))
+        data = client.get("/api/v1/colleges/").data
+        it = next(c for c in data if c["key"] == "it_computing")
+        self.assertIn({"code": "BSIT", "name": "BS Information Technology"}, it["courses"])
+
+
+@override_settings(**DEV_FALLBACK)
+class InputValidationTests(BaseAPITestCase):
+    def test_school_id_must_be_digits_and_hyphens(self):
+        for bad in ("abc123", "12", "2026_0001", "-202600001"):
+            response = self.client.post(REGISTER, registration(school_id=bad), format="json")
+            self.assertEqual(response.status_code, 400, bad)
+            self.assertIn("school_id", response.data["details"])
+        for good in ("2023304440", "2026-00006"):
+            response = self.client.post(
+                REGISTER, registration(school_id=good, email=f"{good}@example.com"), format="json"
+            )
+            self.assertEqual(response.status_code, 201, good)
+
+    def test_names_must_contain_letters(self):
+        response = self.client.post(REGISTER, registration(first_name="1234", last_name="   "), format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("first_name", response.data["details"])
+        self.assertIn("last_name", response.data["details"])
+
+    def test_admin_created_accounts_follow_password_rules(self):
+        superadmin = self.client_for(self.make_user("super@example.com", role=User.Role.SUPERADMIN))
+        response = superadmin.post(
+            "/api/v1/users/",
+            {"email": "new@example.com", "password": "12345678", "first_name": "New", "last_name": "User"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data["details"])

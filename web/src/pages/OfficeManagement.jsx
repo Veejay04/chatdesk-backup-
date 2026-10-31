@@ -107,13 +107,14 @@ export default function OfficeManagement() {
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
               <th className="px-5 py-3">Name</th>
+              <th className="px-5 py-3">Ticket code</th>
               <th className="px-5 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {visibleOffices.length === 0 ? (
               <tr>
-                <td colSpan={2} className="px-5 py-14 text-center text-sm text-gray-500">
+                <td colSpan={3} className="px-5 py-14 text-center text-sm text-gray-500">
                   No offices yet.
                 </td>
               </tr>
@@ -124,6 +125,9 @@ export default function OfficeManagement() {
                   className="border-b border-gray-50 text-navy transition-colors last:border-0 hover:bg-gray-50/80"
                 >
                   <td className="px-5 py-3.5 font-medium">{office.name}</td>
+                  <td className="px-5 py-3.5">
+                    <span className="rounded-full bg-gray-100 px-2.5 py-0.5 font-mono text-xs text-gray-600">{office.code}</span>
+                  </td>
                   <td className="px-5 py-3.5">
                     <div className="flex items-center justify-end gap-3">
                       <button

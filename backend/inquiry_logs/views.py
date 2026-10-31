@@ -5,7 +5,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from tickets.services import create_ticket_from_log
+from tickets.services import create_ai_answered_ticket, create_ticket_from_log
+from users.colleges import filter_by_college
 from users.models import User
 from users.permissions import IsOfficeStaff, IsStudent
 
@@ -52,13 +53,17 @@ class ChatAskView(APIView):
                 chatbot_response=result["reply"],
                 is_escalated=result["detected_intent"] == ESCALATED_INTENT,
             )
+            context = format_turns(history)
+            conversation = f"{context}\nStudent: {message}" if context else ""
             if log.is_escalated:
-                context = format_turns(history)
                 ticket = create_ticket_from_log(
-                    log,
-                    office=office,
-                    title=result["ticket_title"],
-                    conversation_context=f"{context}\nStudent: {message}" if context else "",
+                    log, office=office, title=result["ticket_title"], conversation_context=conversation
+                )
+            elif result.get("faq") is not None:
+                # Every real question gets a ticket: an FAQ answer is recorded
+                # as one already resolved by the AI (not in the staff queue).
+                ticket = create_ai_answered_ticket(
+                    log, result["faq"], office=office, conversation_context=conversation
                 )
 
         payload = {
@@ -72,9 +77,11 @@ class ChatAskView(APIView):
         linked_ticket = ticket or result.get("existing_ticket")
         if linked_ticket is not None:
             payload["ticket_id"] = linked_ticket.ticket_id
+            payload["ticket_code"] = linked_ticket.ticket_code
             payload["ticket_title"] = linked_ticket.title
+            payload["ticket_ai_resolved"] = linked_ticket.is_ai_resolved
 
-        return Response(payload, status=status.HTTP_201_CREATED if ticket else status.HTTP_200_OK)
+        return Response(payload, status=status.HTTP_201_CREATED if log.is_escalated else status.HTTP_200_OK)
 
 
 class InquiryLogFeedbackView(generics.UpdateAPIView):
@@ -97,17 +104,27 @@ class InquiryLogListView(generics.ListAPIView):
     (the student picked it in the mobile category selector) or that
     escalated into a ticket later routed to their office - a log with
     neither has no way to be attributed to any one office.
-    ?intent=, ?user_id=, ?is_escalated=, ?date_from=, ?date_to= filter.
-    Paginated."""
+    ?intent=, ?user_id=, ?is_escalated=, ?date_from=, ?date_to=, ?college=
+    and (Super Admin) ?office= filter. Paginated."""
 
     serializer_class = InquiryLogSerializer
     permission_classes = [IsOfficeStaff]
 
     def get_queryset(self):
-        qs = InquiryLog.objects.all()
+        qs = InquiryLog.objects.select_related("user", "office", "ticket")
         user = self.request.user
         if user.role == user.Role.OFFICE_ADMIN:
             qs = qs.filter(Q(office=user.office) | Q(ticket__office=user.office)).distinct()
+        else:
+            # ?office=<id> or ?office=unassigned - Super Admin only. A log
+            # belongs to an office if the student picked it or its ticket
+            # was routed there.
+            office = self.request.query_params.get("office")
+            if office == "unassigned":
+                qs = qs.filter(office__isnull=True).filter(Q(ticket__isnull=True) | Q(ticket__office__isnull=True))
+            elif office:
+                qs = qs.filter(Q(office_id=office) | Q(ticket__office_id=office)).distinct()
+        qs = filter_by_college(qs, self.request.query_params.get("college"))
 
         intent = self.request.query_params.get("intent")
         if intent:

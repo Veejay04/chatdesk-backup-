@@ -3,7 +3,17 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { NavMenu } from "../../components/nav-menu";
 import { SkeletonTicketRow } from "../../components/skeleton";
@@ -11,17 +21,24 @@ import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useTicketBadge } from "../../context/TicketBadgeContext";
 import axiosClient from "../../lib/axiosClient";
+import { formatDuration, formatManila, staffResolutionSeconds } from "../../lib/dates";
 import type { ThemePalette } from "../../theme/colors";
 
 type Ticket = {
   ticket_id: number;
+  ticket_code: string;
   title: string;
   subject_category: string;
   issue_description: string;
   status: string;
   resolution: string | null;
+  is_ai_resolved: boolean;
   created_at: string;
+  reopened_at: string | null;
+  resolved_at: string | null;
 };
+
+type TicketFilter = "staff" | "ai";
 
 const seenTicketsKey = (userId: number) => `chatdesk_seen_resolved_tickets_${userId}`;
 
@@ -30,6 +47,13 @@ const STATUS_LABELS: Record<string, string> = {
   active: "In Progress",
   resolved: "Resolved",
 };
+
+// issue_description is 'Student asked: "..." - <outcome>.' - show the question only.
+const ISSUE_PATTERN = /^Student asked: "([\s\S]*)" - (?:AI could not resolve|Answered by ChatDesk)\.$/;
+
+function displayQuestion(issueDescription: string) {
+  return ISSUE_PATTERN.exec(issueDescription)?.[1] ?? issueDescription;
+}
 
 export default function TicketsScreen() {
   const { currentUser, logout } = useAuth();
@@ -41,8 +65,16 @@ export default function TicketsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewingTicket, setViewingTicket] = useState<Ticket | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  // Every ChatDesk answer is also a ticket now - kept on its own tab so the
+  // tickets with OSA staff don't get buried.
+  const [filter, setFilter] = useState<TicketFilter>("staff");
+  const [isRequestingFollowUp, setIsRequestingFollowUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";
+  const staffTickets = tickets?.filter((t) => !t.is_ai_resolved) ?? [];
+  const aiTickets = tickets?.filter((t) => t.is_ai_resolved) ?? [];
+  const visibleTickets = filter === "staff" ? staffTickets : aiTickets;
 
   const updateBadgeFromTickets = async (rows: Ticket[]) => {
     if (!currentUser) return;
@@ -54,7 +86,10 @@ export default function TicketsScreen() {
       seenIds = [];
     }
     const seenSet = new Set(seenIds);
-    const unseen = rows.filter((t) => t.status === "resolved" && !seenSet.has(t.ticket_id)).length;
+    // Only staff replies are news - ChatDesk answers were already seen in chat.
+    const unseen = rows.filter(
+      (t) => t.status === "resolved" && !t.is_ai_resolved && !seenSet.has(t.ticket_id)
+    ).length;
     setUnseenCount(unseen);
   };
 
@@ -111,8 +146,25 @@ export default function TicketsScreen() {
     setIsRefreshing(false);
   };
 
+  const handleFollowUp = async (ticket: Ticket) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setFollowUpError(null);
+    setIsRequestingFollowUp(true);
+    try {
+      const { data } = await axiosClient.post<Ticket>(`/tickets/${ticket.ticket_id}/follow-up/`);
+      setViewingTicket(data);
+      setFilter("staff");
+      loadTickets();
+    } catch (error: any) {
+      setFollowUpError(error.response?.data?.message ?? "Couldn't reach OSA staff. Please try again.");
+    } finally {
+      setIsRequestingFollowUp(false);
+    }
+  };
+
   const handleView = async (ticket: Ticket) => {
     Haptics.selectionAsync().catch(() => {});
+    setFollowUpError(null);
     setViewingTicket(ticket);
 
     // Only a resolved ticket counts as seen - otherwise viewing it while
@@ -159,13 +211,41 @@ export default function TicketsScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.filterRow} accessibilityRole="tablist">
+        {(
+          [
+            { key: "staff", label: "Needs staff", count: staffTickets.length },
+            { key: "ai", label: "Answered by ChatDesk", count: aiTickets.length },
+          ] as const
+        ).map((option) => {
+          const isActive = filter === option.key;
+          return (
+            <Pressable
+              key={option.key}
+              style={[styles.filterChip, isActive && styles.filterChipActive]}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setFilter(option.key);
+              }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: isActive }}
+            >
+              <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                {option.label}
+                {tickets ? ` (${option.count})` : ""}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       {loadFailed ? (
         <ScrollView
           contentContainerStyle={styles.centerStateContainer}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
         >
           <Text style={styles.centerState}>
-            {"Tickets aren't available yet - please check back soon."}
+            {"Can't load your tickets right now - pull down to try again."}
           </Text>
         </ScrollView>
       ) : tickets === null ? (
@@ -179,16 +259,26 @@ export default function TicketsScreen() {
             <SkeletonTicketRow key={i} />
           ))}
         </View>
-      ) : tickets.length === 0 ? (
+      ) : visibleTickets.length === 0 ? (
         <ScrollView
           contentContainerStyle={styles.emptyStateContainer}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
         >
           <View style={styles.emptyIconCircle}>
-            <MaterialIcons name="check-circle-outline" size={36} color={colors.accentText} />
+            <MaterialIcons
+              name={filter === "staff" ? "check-circle-outline" : "chat-bubble-outline"}
+              size={36}
+              color={colors.accentText}
+            />
           </View>
-          <Text style={styles.emptyTitle}>You're all caught up</Text>
-          <Text style={styles.centerState}>Nothing to resolve right now - ask ChatDesk anything to get started.</Text>
+          <Text style={styles.emptyTitle}>
+            {filter === "staff" ? "You're all caught up" : "No ChatDesk answers yet"}
+          </Text>
+          <Text style={styles.centerState}>
+            {filter === "staff"
+              ? "No tickets with OSA staff right now - ask ChatDesk anything to get started."
+              : "Questions ChatDesk answers instantly are saved here as tickets."}
+          </Text>
         </ScrollView>
       ) : (
         <>
@@ -200,7 +290,7 @@ export default function TicketsScreen() {
           <ScrollView
             refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={colors.accentText} />}
           >
-            {tickets.map((ticket) => {
+            {visibleTickets.map((ticket) => {
               const isResolved = ticket.status === "resolved";
               return (
                 <View key={ticket.ticket_id} style={styles.row}>
@@ -208,13 +298,19 @@ export default function TicketsScreen() {
                     <Text style={styles.rowTitle} numberOfLines={2}>
                       {ticket.title}
                     </Text>
-                    <Text style={styles.rowNumber}>Ticket #{ticket.ticket_id}</Text>
+                    <Text style={styles.rowNumber}>{ticket.ticket_code}</Text>
+                    <Text style={styles.rowDate}>{formatManila(ticket.created_at)}</Text>
                   </View>
                   <View style={styles.statusColumn}>
                     {isResolved ? (
-                      <MaterialIcons name="check" size={20} color={colors.textPrimary} />
+                      <MaterialIcons
+                        name="check"
+                        size={20}
+                        color={colors.textPrimary}
+                        accessibilityLabel={ticket.is_ai_resolved ? "Answered by ChatDesk" : "Resolved"}
+                      />
                     ) : (
-                      <Text style={styles.pendingText}>Pending</Text>
+                      <Text style={styles.pendingText}>{STATUS_LABELS[ticket.status] ?? "Pending"}</Text>
                     )}
                   </View>
                   <View style={styles.actionColumn}>
@@ -222,7 +318,7 @@ export default function TicketsScreen() {
                       style={styles.viewButton}
                       onPress={() => handleView(ticket)}
                       accessibilityRole="button"
-                      accessibilityLabel={`View ${ticket.title}, ticket number ${ticket.ticket_id}`}
+                      accessibilityLabel={`View ${ticket.title}, ticket ${ticket.ticket_code}`}
                     >
                       <Text style={styles.viewButtonText}>View</Text>
                     </Pressable>
@@ -246,7 +342,7 @@ export default function TicketsScreen() {
               <>
                 <View style={styles.modalHeader}>
                   <View style={styles.modalHeaderText}>
-                    <Text style={styles.modalEyebrow}>Ticket #{viewingTicket.ticket_id}</Text>
+                    <Text style={styles.modalEyebrow}>{viewingTicket.ticket_code}</Text>
                     <Text style={styles.modalTitle}>{viewingTicket.title}</Text>
                   </View>
                   <View style={styles.modalStatusBadge}>
@@ -256,19 +352,70 @@ export default function TicketsScreen() {
                       color={colors.accentText}
                     />
                     <Text style={styles.modalStatusText}>
-                      {STATUS_LABELS[viewingTicket.status] ?? viewingTicket.status}
+                      {viewingTicket.is_ai_resolved
+                        ? "Answered by ChatDesk"
+                        : STATUS_LABELS[viewingTicket.status] ?? viewingTicket.status}
                     </Text>
                   </View>
                 </View>
 
                 <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
                   <Text style={styles.modalSectionLabel}>You asked</Text>
-                  <Text style={styles.modalSectionText}>{viewingTicket.issue_description}</Text>
+                  <Text style={styles.modalSectionText}>{displayQuestion(viewingTicket.issue_description)}</Text>
 
-                  <Text style={[styles.modalSectionLabel, styles.modalSectionLabelSpaced]}>Answer</Text>
+                  <Text style={[styles.modalSectionLabel, styles.modalSectionLabelSpaced]}>
+                    {viewingTicket.is_ai_resolved ? "ChatDesk's answer" : "Staff answer"}
+                  </Text>
                   <Text style={styles.modalSectionText}>
                     {viewingTicket.resolution ?? "Waiting for a staff response."}
                   </Text>
+
+                  <View style={styles.timeline}>
+                    <TimelineRow styles={styles} label="Submitted" value={formatManila(viewingTicket.created_at)} />
+                    {viewingTicket.reopened_at ? (
+                      <TimelineRow
+                        styles={styles}
+                        label="Sent to staff"
+                        value={formatManila(viewingTicket.reopened_at)}
+                      />
+                    ) : null}
+                    {viewingTicket.resolved_at ? (
+                      <TimelineRow
+                        styles={styles}
+                        label={viewingTicket.is_ai_resolved ? "Answered" : "Resolved"}
+                        value={formatManila(viewingTicket.resolved_at)}
+                      />
+                    ) : null}
+                    {viewingTicket.resolved_at && !viewingTicket.is_ai_resolved ? (
+                      <TimelineRow
+                        styles={styles}
+                        label="Resolved in"
+                        value={formatDuration(staffResolutionSeconds(viewingTicket))}
+                      />
+                    ) : null}
+                  </View>
+
+                  {viewingTicket.is_ai_resolved ? (
+                    <View style={styles.followUpBox}>
+                      <Text style={styles.followUpText}>
+                        Didn't fully answer your question? OSA staff can follow up on this same ticket.
+                      </Text>
+                      <Pressable
+                        style={({ pressed }) => [styles.followUpButton, pressed && styles.followUpButtonPressed]}
+                        onPress={() => handleFollowUp(viewingTicket)}
+                        disabled={isRequestingFollowUp}
+                        accessibilityRole="button"
+                        accessibilityLabel="I still need help - send this to OSA staff"
+                      >
+                        {isRequestingFollowUp ? (
+                          <ActivityIndicator size="small" color={colors.accentText} />
+                        ) : (
+                          <Text style={styles.followUpButtonText}>I still need help</Text>
+                        )}
+                      </Pressable>
+                      {followUpError ? <Text style={styles.followUpError}>{followUpError}</Text> : null}
+                    </View>
+                  ) : null}
                 </ScrollView>
 
                 <Pressable style={styles.modalCloseButton} onPress={() => setViewingTicket(null)}>
@@ -290,8 +437,82 @@ export default function TicketsScreen() {
   );
 }
 
+function TimelineRow({
+  styles,
+  label,
+  value,
+}: {
+  styles: ReturnType<typeof createStyles>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.timelineRow}>
+      <Text style={styles.timelineLabel}>{label}</Text>
+      <Text style={styles.timelineValue}>{value}</Text>
+    </View>
+  );
+}
+
 const createStyles = (colors: ThemePalette) =>
   StyleSheet.create({
+    filterRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      paddingHorizontal: 20,
+      paddingBottom: 12,
+    },
+    filterChip: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      backgroundColor: colors.surface,
+    },
+    filterChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    filterChipText: { fontFamily: "Montserrat_700Bold", fontSize: 12, color: colors.textSecondary },
+    filterChipTextActive: { color: colors.white },
+    rowDate: { fontFamily: "Montserrat_400Regular", fontSize: 11, color: colors.textMuted, marginTop: 1 },
+    timeline: {
+      marginTop: 16,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      gap: 6,
+    },
+    timelineRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+    timelineLabel: { fontFamily: "Montserrat_400Regular", fontSize: 12, color: colors.textMuted },
+    timelineValue: {
+      flexShrink: 1,
+      textAlign: "right",
+      fontFamily: "Montserrat_700Bold",
+      fontSize: 12,
+      color: colors.textPrimary,
+    },
+    followUpBox: {
+      marginTop: 16,
+      padding: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 10,
+    },
+    followUpText: { fontFamily: "Montserrat_400Regular", fontSize: 13, lineHeight: 18, color: colors.textSecondary },
+    followUpButton: {
+      alignSelf: "flex-start",
+      borderWidth: 1,
+      borderColor: colors.accentText,
+      borderRadius: 16,
+      paddingVertical: 7,
+      paddingHorizontal: 14,
+      minHeight: 34,
+      justifyContent: "center",
+    },
+    followUpButtonPressed: { opacity: 0.7 },
+    followUpButtonText: { fontFamily: "Montserrat_700Bold", fontSize: 13, color: colors.accentText },
+    followUpError: { fontFamily: "Montserrat_400Regular", fontSize: 12, color: colors.errorRed },
     screen: { flex: 1, backgroundColor: colors.surface },
     header: {
       flexDirection: "row",

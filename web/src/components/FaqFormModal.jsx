@@ -1,6 +1,38 @@
 import { useState } from "react";
+import FieldError, { invalidInput } from "./FieldError.jsx";
+import {
+  LIMITS,
+  firstError,
+  hasErrors,
+  maxLength,
+  noBrokenCharacters,
+  requiredText,
+  serverErrors,
+  validateIntentKeyword,
+} from "../utils/validation.js";
 
 export const CATEGORIES = ["Enrollment", "Scholarship", "Clearance", "Discipline", "General"];
+
+const FIELD_CLASS =
+  "w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gold/40";
+
+function validateFaq({ intentKeyword, questionText, answerContent }) {
+  return {
+    intent_keyword: validateIntentKeyword(intentKeyword),
+    question_text: firstError(
+      requiredText(questionText, "Question"),
+      maxLength(questionText, LIMITS.faqQuestion, "Question"),
+      noBrokenCharacters(questionText)
+    ),
+    answer_content: firstError(
+      requiredText(answerContent, "Answer"),
+      answerContent.trim().length < LIMITS.faqAnswerMin
+        ? `Answer is too short to help a student (at least ${LIMITS.faqAnswerMin} characters).`
+        : null,
+      noBrokenCharacters(answerContent)
+    ),
+  };
+}
 
 export default function FaqFormModal({ initialFaq, offices, hideOfficeField, onSave, onClose }) {
   const [intentKeyword, setIntentKeyword] = useState(initialFaq?.intent_keyword ?? "");
@@ -9,64 +41,83 @@ export default function FaqFormModal({ initialFaq, offices, hideOfficeField, onS
   const [category, setCategory] = useState(initialFaq?.category ?? CATEGORIES[0]);
   const [office, setOffice] = useState(initialFaq?.office ?? "");
   const [isSaving, setIsSaving] = useState(false);
+  const [errors, setErrors] = useState({});
   const [saveError, setSaveError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsSaving(true);
     setSaveError(null);
+    const found = validateFaq({ intentKeyword, questionText, answerContent });
+    setErrors(found);
+    if (hasErrors(found)) return;
+
+    setIsSaving(true);
     try {
       await onSave({
-        intent_keyword: intentKeyword,
-        question_text: questionText,
-        answer_content: answerContent,
+        intent_keyword: intentKeyword.trim(),
+        question_text: questionText.trim(),
+        answer_content: answerContent.trim(),
         category,
         office: office || null,
       });
       onClose();
     } catch (err) {
-      const data = err.response?.data;
-      const fieldMessages = Object.values(data?.details ?? {}).flat();
-      setSaveError(fieldMessages.length ? fieldMessages.join(" ") : data?.message ?? "Could not save this FAQ.");
+      const { fields, general } = serverErrors(err, "Could not save this FAQ.");
+      setErrors(fields);
+      setSaveError(general);
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/40">
+    <div className="fixed inset-0 z-40 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
       <form
         onSubmit={handleSubmit}
+        noValidate
         className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg"
       >
         <h3 className="mb-4 text-lg font-bold text-navy">
           {initialFaq ? "Edit FAQ" : "Add FAQ"}
         </h3>
 
-        <label className="mb-1 block text-sm text-gray-600">Intent keyword</label>
-        <input
-          value={intentKeyword}
-          onChange={(e) => setIntentKeyword(e.target.value)}
-          required
-          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gold/40"
-        />
+        <div className="mb-3">
+          <label htmlFor="faq-keyword" className="mb-1 block text-sm text-gray-600">Intent keyword</label>
+          <input
+            id="faq-keyword"
+            value={intentKeyword}
+            onChange={(e) => setIntentKeyword(e.target.value)}
+            placeholder="e.g. scholarship_requirements"
+            aria-invalid={Boolean(errors.intent_keyword)}
+            className={`${FIELD_CLASS} ${invalidInput(errors.intent_keyword)}`}
+          />
+          <FieldError message={errors.intent_keyword} />
+        </div>
 
-        <label className="mb-1 block text-sm text-gray-600">Question</label>
-        <input
-          value={questionText}
-          onChange={(e) => setQuestionText(e.target.value)}
-          required
-          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gold/40"
-        />
+        <div className="mb-3">
+          <label htmlFor="faq-question" className="mb-1 block text-sm text-gray-600">Question</label>
+          <input
+            id="faq-question"
+            value={questionText}
+            onChange={(e) => setQuestionText(e.target.value)}
+            aria-invalid={Boolean(errors.question_text)}
+            className={`${FIELD_CLASS} ${invalidInput(errors.question_text)}`}
+          />
+          <FieldError message={errors.question_text} />
+        </div>
 
-        <label className="mb-1 block text-sm text-gray-600">Answer</label>
-        <textarea
-          value={answerContent}
-          onChange={(e) => setAnswerContent(e.target.value)}
-          required
-          rows={4}
-          className="mb-3 w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gold/40"
-        />
+        <div className="mb-3">
+          <label htmlFor="faq-answer" className="mb-1 block text-sm text-gray-600">Answer</label>
+          <textarea
+            id="faq-answer"
+            value={answerContent}
+            onChange={(e) => setAnswerContent(e.target.value)}
+            rows={4}
+            aria-invalid={Boolean(errors.answer_content)}
+            className={`${FIELD_CLASS} ${invalidInput(errors.answer_content)}`}
+          />
+          <FieldError message={errors.answer_content} />
+        </div>
 
         <label className="mb-1 block text-sm text-gray-600">Category</label>
         <select

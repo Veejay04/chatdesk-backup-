@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { getAnalyticsOverview } from "../api/analytics.js";
+import { getColleges } from "../api/colleges.js";
+import { getOffices } from "../api/offices.js";
 import { ErrorState, LoadingState } from "../components/PageState.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import { formatDuration, formatManila, secondsSince } from "../utils/dates.js";
+
+const FILTER_CLASS =
+  "rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40";
 
 const STATUS_META = {
   pending: { label: "Pending", textClass: "text-status-pending", bgClass: "bg-status-pending" },
@@ -9,18 +16,27 @@ const STATUS_META = {
 };
 
 export default function AnalyticsOverview() {
+  const { currentUser } = useAuth();
+  const isOfficeAdmin = currentUser?.role === "office_admin";
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [officeFilter, setOfficeFilter] = useState("");
+  const [collegeFilter, setCollegeFilter] = useState("");
+  const [offices, setOffices] = useState([]);
+  const [colleges, setColleges] = useState([]);
 
-  const loadData = () => {
+  const loadData = (overrides = {}) => {
+    const filters = { dateFrom, dateTo, officeFilter, collegeFilter, ...overrides };
     setIsLoading(true);
     setError(null);
     const params = {};
-    if (dateFrom) params.date_from = dateFrom;
-    if (dateTo) params.date_to = dateTo;
+    if (filters.dateFrom) params.date_from = filters.dateFrom;
+    if (filters.dateTo) params.date_to = filters.dateTo;
+    if (filters.officeFilter) params.office = filters.officeFilter;
+    if (filters.collegeFilter) params.college = filters.collegeFilter;
 
     getAnalyticsOverview(params)
       .then(setData)
@@ -30,6 +46,14 @@ export default function AnalyticsOverview() {
 
   useEffect(() => {
     loadData();
+    getColleges()
+      .then((res) => setColleges(res.data))
+      .catch(() => {});
+    if (!isOfficeAdmin) {
+      getOffices()
+        .then((res) => setOffices(res.data.results ?? res.data))
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -41,15 +65,17 @@ export default function AnalyticsOverview() {
   const handleClearFilter = () => {
     setDateFrom("");
     setDateTo("");
-    setTimeout(loadData, 0);
+    setOfficeFilter("");
+    setCollegeFilter("");
+    loadData({ dateFrom: "", dateTo: "", officeFilter: "", collegeFilter: "" });
   };
 
-  if (isLoading) return <LoadingState label="Loading analytics..." />;
+  if (isLoading && !data) return <LoadingState label="Loading analytics..." />;
   if (error) return <ErrorState message={error} />;
   if (!data) return null;
 
+  // Staff tickets only - chatbot-answered tickets are counted separately.
   const totalTickets = Object.values(data.tickets_by_status).reduce((sum, count) => sum + count, 0);
-  const resolvedTickets = data.tickets_by_status.resolved ?? 0;
 
   return (
     <section>
@@ -59,6 +85,7 @@ export default function AnalyticsOverview() {
           <input
             type="date"
             value={dateFrom}
+            max={dateTo || undefined}
             onChange={(e) => setDateFrom(e.target.value)}
             className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40"
           />
@@ -68,9 +95,31 @@ export default function AnalyticsOverview() {
           <input
             type="date"
             value={dateTo}
+            min={dateFrom || undefined}
             onChange={(e) => setDateTo(e.target.value)}
             className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40"
           />
+        </div>
+        {!isOfficeAdmin && (
+          <div>
+            <label htmlFor="analytics-office" className="mb-1 block text-sm text-gray-500">Office</label>
+            <select id="analytics-office" value={officeFilter} onChange={(e) => setOfficeFilter(e.target.value)} className={FILTER_CLASS}>
+              <option value="">All Offices</option>
+              <option value="unassigned">Unassigned</option>
+              {offices.map((o) => (
+                <option key={o.office_id} value={String(o.office_id)}>{o.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label htmlFor="analytics-college" className="mb-1 block text-sm text-gray-500">College</label>
+          <select id="analytics-college" value={collegeFilter} onChange={(e) => setCollegeFilter(e.target.value)} className={FILTER_CLASS}>
+            <option value="">All Colleges</option>
+            {colleges.map((college) => (
+              <option key={college.key} value={college.key}>{college.name}</option>
+            ))}
+          </select>
         </div>
         <button
           type="submit"
@@ -87,7 +136,7 @@ export default function AnalyticsOverview() {
         </button>
       </form>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <StatTile
           label="Total Inquiries"
           value={data.total_inquiries}
@@ -103,9 +152,9 @@ export default function AnalyticsOverview() {
           }
         />
         <StatTile
-          label="Total Tickets"
+          label="Staff Tickets"
           value={totalTickets}
-          accentClass="bg-gold/15 text-gold"
+          accentClass="bg-navy/10 text-navy"
           icon={
             <path
               d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 6v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-6V7Z"
@@ -117,9 +166,9 @@ export default function AnalyticsOverview() {
           }
         />
         <StatTile
-          label="Resolved Tickets"
-          value={resolvedTickets}
-          accentClass="bg-status-resolved/15 text-status-resolved"
+          label="Answered by ChatDesk"
+          value={data.ai_answered_tickets ?? 0}
+          accentClass="bg-gold/15 text-gold"
           icon={
             <path
               d="m20 6-11 11-5-5"
@@ -132,7 +181,24 @@ export default function AnalyticsOverview() {
         />
         <StatTile
           label="Resolution Rate"
+          hint="Staff tickets resolved"
           value={`${Math.round(data.resolution_rate * 100)}%`}
+          accentClass="bg-status-resolved/15 text-status-resolved"
+          icon={
+            <path
+              d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-3-8 2 2 4-4"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          }
+        />
+        <StatTile
+          label="Avg. Resolution Time"
+          hint="Staff tickets"
+          value={data.avg_resolution_seconds == null ? "—" : formatDuration(data.avg_resolution_seconds)}
+          isText
           accentClass="bg-status-active/15 text-status-active"
           icon={
             <path
@@ -146,6 +212,8 @@ export default function AnalyticsOverview() {
         />
       </div>
 
+      <OfficeWorkload rows={data.offices ?? []} />
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm lg:col-span-3">
           <SectionHeader
@@ -157,7 +225,7 @@ export default function AnalyticsOverview() {
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm lg:col-span-2">
-          <SectionHeader title="Tickets by Status" subtitle="Current escalation pipeline" />
+          <SectionHeader title="Tickets by Status" subtitle="Staff tickets - chatbot answers not included" />
           <TicketStatusDonut counts={data.tickets_by_status} total={totalTickets} />
         </div>
       </div>
@@ -174,7 +242,7 @@ function SectionHeader({ title, subtitle }) {
   );
 }
 
-function StatTile({ label, value, icon, accentClass }) {
+function StatTile({ label, hint, value, icon, accentClass, isText = false }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
       <div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-xl ${accentClass}`}>
@@ -182,8 +250,77 @@ function StatTile({ label, value, icon, accentClass }) {
           {icon}
         </svg>
       </div>
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="mt-1 text-3xl font-bold tabular-nums text-navy">{value}</p>
+      <p className="text-sm text-gray-500">
+        {label}
+        {hint && <span className="block text-xs text-gray-400">{hint}</span>}
+      </p>
+      <p className={`mt-1 font-bold tabular-nums text-navy ${isText ? "text-xl" : "text-3xl"}`}>{value}</p>
+    </div>
+  );
+}
+
+// Which office is falling behind: staff tickets per office, most pending first.
+function OfficeWorkload({ rows }) {
+  return (
+    <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <SectionHeader
+        title="Pending Work by Office"
+        subtitle="Staff tickets for the selected filters - offices with the most pending work first"
+      />
+      {rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-gray-500">No tickets for these filters.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                <th className="py-2 pr-4">Office</th>
+                <th className="px-3 py-2 text-right">Pending</th>
+                <th className="px-3 py-2 text-right">Active</th>
+                <th className="px-3 py-2 text-right">Resolved</th>
+                <th className="px-3 py-2 text-right">Answered by ChatDesk</th>
+                <th className="px-3 py-2">Oldest pending</th>
+                <th className="py-2 pl-3">Avg. resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.office_id ?? "unassigned"} className="border-b border-gray-50 text-navy last:border-0">
+                  <td className="py-2.5 pr-4">
+                    <span className="font-medium">{row.office_name}</span>
+                    {row.office_code && <span className="ml-2 font-mono text-xs text-gray-400">{row.office_code}</span>}
+                  </td>
+                  <td className={`px-3 py-2.5 text-right tabular-nums ${row.pending ? "font-bold text-status-pending" : "text-gray-400"}`}>
+                    {row.pending}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{row.active}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{row.resolved}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{row.ai_answered}</td>
+                  <td className="px-3 py-2.5">
+                    {row.oldest_pending_at ? (
+                      <span title={formatManila(row.oldest_pending_at)}>
+                        <span className="font-mono text-xs text-gray-500">{row.oldest_pending_code}</span>
+                        <span className="block text-xs text-status-pending">
+                          waiting {formatDuration(secondsSince(row.oldest_pending_at))}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pl-3">
+                    {row.avg_resolution_seconds == null ? (
+                      <span className="text-gray-400">—</span>
+                    ) : (
+                      formatDuration(row.avg_resolution_seconds)
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,9 +1,41 @@
 from django.conf import settings
-from django.db import models
+from django.db import IntegrityError, models, transaction
+from django.utils import timezone
 
 from inquiry_logs.models import InquiryLog
 
 FALLBACK_TICKET_TITLE = "General Inquiry"
+# Ticket-code prefix for tickets with no office yet.
+UNASSIGNED_OFFICE_CODE = "GEN"
+
+
+class TicketSequence(models.Model):
+    """One row per office-and-day prefix (e.g. "OSA103126"), counting the
+    tickets numbered under it. Locked row-by-row when numbering, so two
+    tickets created at the same moment can't get the same number."""
+
+    prefix = models.CharField(max_length=20, unique=True)
+    last_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "tbl_ticket_sequence"
+
+
+def next_ticket_code(office, when=None):
+    """OSA103126001: office code + Manila date (MMDDYY) + that office's
+    number for the day, starting at 001 (grows to 1000+ if ever needed)."""
+    day = timezone.localdate(when) if when else timezone.localdate()
+    prefix = f"{office.code if office else UNASSIGNED_OFFICE_CODE}{day:%m%d%y}"
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                TicketSequence.objects.get_or_create(prefix=prefix)
+        except IntegrityError:
+            pass  # another request created this prefix's row first
+        sequence = TicketSequence.objects.select_for_update().get(prefix=prefix)
+        sequence.last_number += 1
+        sequence.save(update_fields=["last_number"])
+    return f"{prefix}{sequence.last_number:03d}"
 
 
 class Ticket(models.Model):
@@ -13,6 +45,9 @@ class Ticket(models.Model):
         RESOLVED = "resolved", "Resolved"
 
     ticket_id = models.BigAutoField(primary_key=True)
+    # Assigned once on creation and never changed - not even when the ticket
+    # is rerouted to another office - so it stays a stable reference.
+    ticket_code = models.CharField(max_length=24, unique=True, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tickets"
     )
@@ -42,6 +77,13 @@ class Ticket(models.Model):
     conversation_context = models.TextField(blank=True, default="")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     resolution = models.TextField(null=True, blank=True)
+    # True while the ticket is just the record of a question the chatbot
+    # answered from the FAQs - created already resolved, kept out of the
+    # staff queue. Becomes False if the student asks for staff follow-up.
+    is_ai_resolved = models.BooleanField(default=False)
+    # When the student asked for follow-up on an AI-answered ticket; staff
+    # resolution time is measured from here instead of created_at.
+    reopened_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
@@ -50,4 +92,9 @@ class Ticket(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"Ticket {self.ticket_id} ({self.status})"
+        return f"{self.ticket_code} ({self.status})"
+
+    def save(self, *args, **kwargs):
+        if not self.ticket_code:
+            self.ticket_code = next_ticket_code(self.office, self.created_at)
+        super().save(*args, **kwargs)

@@ -5,6 +5,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Keyboard,
@@ -44,8 +45,27 @@ export default function StudentChatScreen() {
   const { currentUser, logout } = useAuth();
   const { colors, isDark } = useTheme();
   const styles = createStyles(colors);
-  const { messages, isSending, sendMessage, submitFeedback, offices, selectedOffice, setSelectedOffice } =
-    useChat();
+  const {
+    messages,
+    isSending,
+    sendMessage,
+    submitFeedback,
+    requestStaffFollowUp,
+    offices,
+    selectedOffice,
+    setSelectedOffice,
+  } = useChat();
+  const [followUpTicketId, setFollowUpTicketId] = useState<number | null>(null);
+
+  const handleNeedHelp = async (ticketId: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setFollowUpTicketId(ticketId);
+    const ok = await requestStaffFollowUp(ticketId);
+    setFollowUpTicketId(null);
+    if (!ok) {
+      Alert.alert("Couldn't reach OSA staff", "Please check your connection and try again.");
+    }
+  };
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -256,25 +276,7 @@ export default function StudentChatScreen() {
                       {item.text}
                     </Text>
                   </View>
-                  {item.role === "assistant" && item.ticketId ? (
-                    <View style={styles.ticketRow}>
-                      <Text style={styles.ticketRowLabel} numberOfLines={2}>
-                        {item.ticketTitle ?? "General Inquiry"} — Ticket #{item.ticketId}
-                      </Text>
-                      <Pressable
-                        style={({ pressed }) => [styles.viewTicketButton, pressed && styles.viewTicketButtonPressed]}
-                        onPress={() => {
-                          Haptics.selectionAsync().catch(() => {});
-                          router.push({ pathname: "/tickets", params: { ticketId: String(item.ticketId) } });
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`View ticket number ${item.ticketId}`}
-                      >
-                        <MaterialIcons name="confirmation-number" size={15} color={colors.white} />
-                        <Text style={styles.viewTicketButtonText}>View Ticket</Text>
-                      </Pressable>
-                    </View>
-                  ) : item.role === "assistant" && item.logId && item.canRate ? (
+                  {item.role === "assistant" && item.logId && item.canRate ? (
                     <View style={styles.feedbackRow}>
                       <Pressable
                         onPress={() => {
@@ -311,6 +313,46 @@ export default function StudentChatScreen() {
                       {item.feedback ? (
                         <Text style={styles.feedbackThanksText}>Thanks for your feedback</Text>
                       ) : null}
+                      {item.ticketId && item.ticketAiResolved ? (
+                        <Pressable
+                          style={styles.needHelpLink}
+                          onPress={() => handleNeedHelp(item.ticketId!)}
+                          disabled={followUpTicketId === item.ticketId}
+                          hitSlop={8}
+                          accessibilityRole="button"
+                          accessibilityLabel="Still need help? Send this question to OSA staff"
+                        >
+                          {followUpTicketId === item.ticketId ? (
+                            <ActivityIndicator size="small" color={colors.accentText} />
+                          ) : (
+                            <Text style={styles.needHelpText}>Still need help?</Text>
+                          )}
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {/* A ticket with OSA staff: escalations, repeats, and ChatDesk
+                      answers the student asked staff to follow up on. */}
+                  {item.role === "assistant" && item.ticketId && !item.ticketAiResolved ? (
+                    <View style={styles.ticketRow}>
+                      <Text style={styles.ticketRowLabel} numberOfLines={2}>
+                        {item.ticketTitle ?? "General Inquiry"} — {item.ticketCode ?? `Ticket #${item.ticketId}`}
+                      </Text>
+                      {item.canRate ? (
+                        <Text style={styles.ticketRowHint}>Sent to OSA staff - they'll reply in your Tickets.</Text>
+                      ) : null}
+                      <Pressable
+                        style={({ pressed }) => [styles.viewTicketButton, pressed && styles.viewTicketButtonPressed]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          router.push({ pathname: "/tickets", params: { ticketId: String(item.ticketId) } });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View ticket ${item.ticketCode ?? item.ticketId}`}
+                      >
+                        <MaterialIcons name="confirmation-number" size={15} color={colors.white} />
+                        <Text style={styles.viewTicketButtonText}>View Ticket</Text>
+                      </Pressable>
                     </View>
                   ) : null}
                   {/* Only on the latest reply - older suggestions are stale once the student moves on. */}
@@ -636,6 +678,18 @@ const createStyles = (colors: ThemePalette) =>
       paddingHorizontal: 14,
     },
     viewTicketButtonPressed: { opacity: 0.8 },
+    ticketRowHint: {
+      fontFamily: "Montserrat_400Regular",
+      fontSize: 12,
+      color: colors.textSecondary,
+    },
+    needHelpLink: { marginLeft: "auto", minHeight: 20, justifyContent: "center" },
+    needHelpText: {
+      fontFamily: "Montserrat_700Bold",
+      fontSize: 12,
+      color: colors.accentText,
+      textDecorationLine: "underline",
+    },
     viewTicketButtonText: {
       fontFamily: "Montserrat_700Bold",
       fontSize: 13,

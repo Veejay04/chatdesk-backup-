@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 
 from offices.models import Office
@@ -6,6 +8,8 @@ from .models import Faq
 
 BROKEN_CHARACTER = "�"
 MIN_ANSWER_LENGTH = 15
+QUESTION_MAX_LENGTH = 300
+INTENT_KEYWORD_PATTERN = re.compile(r"^[A-Za-z0-9_]{2,100}$")
 
 
 class FaqSerializer(serializers.ModelSerializer):
@@ -30,7 +34,18 @@ class FaqSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate_intent_keyword(self, value):
+        value = value.strip()
+        if not INTENT_KEYWORD_PATTERN.match(value):
+            raise serializers.ValidationError(
+                "Use 2-100 letters, numbers or underscores, no spaces (e.g. scholarship_requirements)."
+            )
+        return value
+
     def validate_question_text(self, value):
+        value = " ".join(value.split())
+        if len(value) > QUESTION_MAX_LENGTH:
+            raise serializers.ValidationError(f"Keep the question under {QUESTION_MAX_LENGTH} characters.")
         return self._reject_broken_characters(value)
 
     def validate_answer_content(self, value):

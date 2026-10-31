@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from offices.models import Office
+from users.colleges import college_for_course
 
 from .models import InquiryLog
 
@@ -8,15 +9,25 @@ from .models import InquiryLog
 class InquiryLogSerializer(serializers.ModelSerializer):
     user_id = serializers.PrimaryKeyRelatedField(source="user", read_only=True)
     office_name = serializers.CharField(source="office.name", read_only=True, default=None)
+    student_college = serializers.SerializerMethodField()
+    ticket_code = serializers.SerializerMethodField()
 
     class Meta:
         model = InquiryLog
         fields = [
             "log_id", "user_id", "user_message", "detected_intent",
             "chatbot_response", "is_escalated", "office", "office_name",
-            "feedback", "timestamp",
+            "student_college", "ticket_code", "feedback", "timestamp",
         ]
         read_only_fields = fields
+
+    def get_student_college(self, log):
+        college = college_for_course(log.user.course)
+        return college["name"] if college else None
+
+    def get_ticket_code(self, log):
+        ticket = getattr(log, "ticket", None)
+        return ticket.ticket_code if ticket else None
 
 
 CHAT_MESSAGE_MAX_LENGTH = 1000

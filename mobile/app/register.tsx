@@ -15,7 +15,17 @@ import {
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { AuthHeader } from "../components/auth-header";
+import { FieldError } from "../components/field-error";
 import { useAuth } from "../context/AuthContext";
+import {
+  type FieldErrors,
+  hasErrors,
+  serverFieldErrors,
+  validateEmail,
+  validateNewPassword,
+  validatePersonName,
+  validateSchoolId,
+} from "../lib/validation";
 import { useTheme } from "../context/ThemeContext";
 import type { ThemePalette } from "../theme/colors";
 
@@ -65,29 +75,43 @@ export default function RegisterScreen() {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [course, setCourse] = useState(COURSE_OPTIONS[0].value);
   const [errorMessage, setErrorMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCoursePickerOpen, setIsCoursePickerOpen] = useState(false);
   const { register } = useAuth();
 
   const selectedCourseLabel = COURSE_OPTIONS.find((option) => option.value === course)?.label;
+  const invalid = (field: string) => (fieldErrors[field] ? { borderColor: colors.errorRed } : null);
 
   const handleRegister = async () => {
     setErrorMessage("");
+    const found: FieldErrors = {
+      first_name: validatePersonName(firstName, "First name"),
+      last_name: validatePersonName(lastName, "Last name"),
+      school_id: validateSchoolId(schoolId),
+      email: validateEmail(email),
+      password: validateNewPassword(password),
+    };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
+
     setIsSubmitting(true);
     try {
       await register({
-        first_name: firstName,
-        last_name: lastName,
-        school_id: schoolId,
-        email,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        school_id: schoolId.trim(),
+        email: email.trim(),
         password,
         course,
       });
       router.replace("/");
     } catch (error: any) {
-      const details = error.response?.data?.details;
-      const firstDetail = details ? (Object.values(details)[0] as string[])?.[0] : null;
-      setErrorMessage(firstDetail || error.response?.data?.message || "Unable to register right now.");
+      // Server-only rules (common password, email/ID already taken) land
+      // under the field they belong to.
+      const { fields, general } = serverFieldErrors(error, "Unable to register right now.");
+      setFieldErrors(fields);
+      setErrorMessage(general ?? "");
     } finally {
       setIsSubmitting(false);
     }
@@ -110,34 +134,41 @@ export default function RegisterScreen() {
 
         <Text style={styles.label}>First name</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, invalid("first_name")]}
           placeholder="Juan"
           placeholderTextColor={colors.textMuted}
           value={firstName}
           onChangeText={setFirstName}
+          maxLength={150}
         />
+        <FieldError message={fieldErrors.first_name} />
 
         <Text style={styles.label}>Last name</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, invalid("last_name")]}
           placeholder="Dela Cruz"
           placeholderTextColor={colors.textMuted}
           value={lastName}
           onChangeText={setLastName}
+          maxLength={150}
         />
+        <FieldError message={fieldErrors.last_name} />
 
         <Text style={styles.label}>School ID</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, invalid("school_id")]}
           placeholder="2026-00001"
           placeholderTextColor={colors.textMuted}
+          keyboardType="numbers-and-punctuation"
           value={schoolId}
           onChangeText={setSchoolId}
+          maxLength={20}
         />
+        <FieldError message={fieldErrors.school_id} />
 
         <Text style={styles.label}>Email</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, invalid("email")]}
           placeholder="you@ustp.edu.ph"
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"
@@ -145,9 +176,10 @@ export default function RegisterScreen() {
           value={email}
           onChangeText={setEmail}
         />
+        <FieldError message={fieldErrors.email} />
 
         <Text style={styles.label}>Password</Text>
-        <View style={styles.passwordField}>
+        <View style={[styles.passwordField, invalid("password")]}>
           <TextInput
             style={styles.passwordInput}
             placeholder="••••••••"
@@ -170,6 +202,7 @@ export default function RegisterScreen() {
             />
           </Pressable>
         </View>
+        <FieldError message={fieldErrors.password} />
 
         <Text style={styles.label}>Course</Text>
         <Pressable

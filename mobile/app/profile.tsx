@@ -3,9 +3,11 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { FieldError } from "../components/field-error";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import axiosClient from "../lib/axiosClient";
+import { serverFieldErrors, validatePersonName } from "../lib/validation";
 import type { ThemePalette } from "../theme/colors";
 
 const COURSE_LABELS: Record<string, string> = {
@@ -27,18 +29,27 @@ export default function ProfileScreen() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [nicknameError, setNicknameError] = useState<string | null>(null);
 
   const userInitial = currentUser?.first_name?.[0]?.toUpperCase() ?? "?";
   const fullName = `${currentUser?.first_name ?? ""} ${currentUser?.last_name ?? ""}`.trim();
   const courseLabel = currentUser?.course ? COURSE_LABELS[currentUser.course] ?? currentUser.course : "—";
 
   const handleUpdate = async () => {
+    const problem = validatePersonName(nickname, "Name");
+    setNicknameError(problem);
+    if (problem) return;
     setIsUpdating(true);
     try {
-      const { data } = await axiosClient.patch("/auth/me/", { first_name: nickname });
+      const { data } = await axiosClient.patch("/auth/me/", { first_name: nickname.trim() });
       updateCurrentUser(data);
-    } catch {
-      Alert.alert("Unable to update", "Please try again.");
+    } catch (error: any) {
+      const { fields, general } = serverFieldErrors(error, "Please try again.");
+      if (fields.first_name) {
+        setNicknameError(fields.first_name);
+      } else {
+        Alert.alert("Unable to update", general ?? "Please try again.");
+      }
     } finally {
       setIsUpdating(false);
     }
@@ -136,12 +147,14 @@ export default function ProfileScreen() {
 
       <Text style={styles.sectionLabel}>What should we call you?</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, nicknameError ? { borderColor: colors.errorRed } : null]}
         value={nickname}
         onChangeText={setNickname}
         placeholder="Nickname"
         placeholderTextColor={colors.textMuted}
+        maxLength={150}
       />
+      <FieldError message={nicknameError} />
       <Pressable style={styles.button} onPress={handleUpdate} disabled={isUpdating}>
         <Text style={styles.buttonText}>{isUpdating ? "Updating..." : "Update"}</Text>
       </Pressable>

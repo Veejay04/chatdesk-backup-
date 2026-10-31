@@ -13,7 +13,9 @@ import {
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router } from "expo-router";
 import { AuthHeader } from "../components/auth-header";
+import { FieldError } from "../components/field-error";
 import { useAuth } from "../context/AuthContext";
+import { type FieldErrors, hasErrors, serverFieldErrors, validateEmail } from "../lib/validation";
 import { useTheme } from "../context/ThemeContext";
 import type { ThemePalette } from "../theme/colors";
 
@@ -27,22 +29,28 @@ export default function LoginScreen() {
   const [errorMessage, setErrorMessage] = useState(
     sessionExpired ? "Your session expired. Please log in again." : ""
   );
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const invalid = (field: string) => (fieldErrors[field] ? { borderColor: colors.errorRed } : null);
 
   const handleLogin = async () => {
     setErrorMessage("");
+    const found: FieldErrors = {
+      email: validateEmail(email),
+      password: password ? null : "Password is required.",
+    };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
+
     setIsSubmitting(true);
     try {
-      await login(email, password);
+      await login(email.trim(), password);
       router.replace("/");
     } catch (error: any) {
       // Login errors (wrong password, unverified email) arrive under
-      // details.non_field_errors; data.message is only the generic
-      // "Invalid request parameters." Rate limits come as data.message.
-      const data = error.response?.data;
-      setErrorMessage(
-        data?.details?.non_field_errors?.[0] || data?.message || "Can't reach ChatDesk right now. Please try again."
-      );
+      // details.non_field_errors; rate limits come as the message.
+      const { general } = serverFieldErrors(error, "Unable to log in right now.");
+      setErrorMessage(general ?? "Invalid email or password.");
     } finally {
       setIsSubmitting(false);
     }
@@ -65,7 +73,7 @@ export default function LoginScreen() {
 
         <Text style={styles.label}>Email</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, invalid("email")]}
           placeholder="you@ustp.edu.ph"
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"
@@ -73,9 +81,10 @@ export default function LoginScreen() {
           value={email}
           onChangeText={setEmail}
         />
+        <FieldError message={fieldErrors.email} />
 
         <Text style={styles.label}>Password</Text>
-        <View style={styles.passwordField}>
+        <View style={[styles.passwordField, invalid("password")]}>
           <TextInput
             style={styles.passwordInput}
             placeholder="••••••••"
@@ -98,6 +107,7 @@ export default function LoginScreen() {
             />
           </Pressable>
         </View>
+        <FieldError message={fieldErrors.password} />
 
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 

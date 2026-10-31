@@ -1,9 +1,22 @@
 import { useEffect, useState } from "react";
+import { getColleges } from "../api/colleges.js";
 import { getInquiryLogs } from "../api/inquiryLogs.js";
+import { getOffices } from "../api/offices.js";
 import Pagination from "../components/Pagination.jsx";
 import { ErrorState, LoadingState } from "../components/PageState.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import { formatManila } from "../utils/dates.js";
+
+const FILTER_CLASS =
+  "rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40";
 
 export default function InquiryLogs() {
+  const { currentUser } = useAuth();
+  const isOfficeAdmin = currentUser?.role === "office_admin";
+  const [offices, setOffices] = useState([]);
+  const [colleges, setColleges] = useState([]);
+  const [officeFilter, setOfficeFilter] = useState("");
+  const [collegeFilter, setCollegeFilter] = useState("");
   const [logs, setLogs] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [escalatedCount, setEscalatedCount] = useState(0);
@@ -24,6 +37,8 @@ export default function InquiryLogs() {
       page,
       intent: intentFilter || undefined,
       user_id: debouncedUserFilter || undefined,
+      office: officeFilter || undefined,
+      college: collegeFilter || undefined,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
     })
@@ -60,20 +75,30 @@ export default function InquiryLogs() {
   useEffect(() => {
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intentFilter, debouncedUserFilter, dateFrom, dateTo]);
+  }, [intentFilter, debouncedUserFilter, officeFilter, collegeFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     loadLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, intentFilter, debouncedUserFilter, dateFrom, dateTo]);
+  }, [page, intentFilter, debouncedUserFilter, officeFilter, collegeFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     loadEscalatedCount();
-  }, []);
+    getColleges()
+      .then((res) => setColleges(res.data))
+      .catch(() => {});
+    if (!isOfficeAdmin) {
+      getOffices()
+        .then((res) => setOffices(res.data.results ?? res.data))
+        .catch(() => {});
+    }
+  }, [isOfficeAdmin]);
 
   const handleClearFilters = () => {
     setIntentFilter("");
     setUserFilter("");
+    setOfficeFilter("");
+    setCollegeFilter("");
     setDateFrom("");
     setDateTo("");
   };
@@ -128,23 +153,45 @@ export default function InquiryLogs() {
             </option>
           ))}
         </select>
+        {!isOfficeAdmin && (
+          <select value={officeFilter} onChange={(e) => setOfficeFilter(e.target.value)} aria-label="Office" className={FILTER_CLASS}>
+            <option value="">All Offices</option>
+            <option value="unassigned">Unassigned</option>
+            {offices.map((o) => (
+              <option key={o.office_id} value={String(o.office_id)}>{o.name}</option>
+            ))}
+          </select>
+        )}
+        <select value={collegeFilter} onChange={(e) => setCollegeFilter(e.target.value)} aria-label="College" className={FILTER_CLASS}>
+          <option value="">All Colleges</option>
+          {colleges.map((college) => (
+            <option key={college.key} value={college.key}>{college.name}</option>
+          ))}
+        </select>
         <input
           type="text"
+          inputMode="numeric"
           placeholder="User ID"
+          aria-label="User ID"
           value={userFilter}
-          onChange={(e) => setUserFilter(e.target.value)}
+          // IDs are numbers - anything else would just return nothing.
+          onChange={(e) => setUserFilter(e.target.value.replace(/\D/g, ""))}
           className="w-28 rounded-full border border-gray-200 px-4 py-1.5 text-sm text-navy placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gold/40"
         />
         <input
           type="date"
           value={dateFrom}
+          max={dateTo || undefined}
           onChange={(e) => setDateFrom(e.target.value)}
+          aria-label="From date"
           className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40"
         />
         <input
           type="date"
           value={dateTo}
+          min={dateFrom || undefined}
           onChange={(e) => setDateTo(e.target.value)}
+          aria-label="To date"
           className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-gold/40"
         />
         <button
@@ -161,7 +208,7 @@ export default function InquiryLogs() {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              <th className="px-5 py-3">User ID</th>
+              <th className="px-5 py-3">Student</th>
               <th className="px-5 py-3">Message</th>
               <th className="px-5 py-3">Intent</th>
               <th className="px-5 py-3">Office</th>
@@ -183,8 +230,16 @@ export default function InquiryLogs() {
                   key={log.log_id}
                   className="border-b border-gray-50 text-navy transition-colors last:border-0 hover:bg-gray-50/80"
                 >
-                  <td className="px-5 py-3.5 text-gray-500">#{log.user_id}</td>
-                  <td className="max-w-sm truncate px-5 py-3.5">{log.user_message}</td>
+                  <td className="px-5 py-3.5 text-gray-500">
+                    <div>#{log.user_id}</div>
+                    {log.student_college && (
+                      <div className="max-w-[10rem] truncate text-xs text-gray-400">{log.student_college}</div>
+                    )}
+                  </td>
+                  <td className="max-w-sm px-5 py-3.5">
+                    <div className="truncate">{log.user_message}</div>
+                    {log.ticket_code && <div className="font-mono text-xs text-gray-400">{log.ticket_code}</div>}
+                  </td>
                   <td className="px-5 py-3.5">
                     <span className="whitespace-nowrap rounded-full bg-navy/5 px-2.5 py-0.5 text-xs font-medium text-navy">
                       {log.detected_intent}
@@ -223,8 +278,8 @@ export default function InquiryLogs() {
                       <span className="italic text-gray-400">—</span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5 text-right text-gray-500">
-                    {new Date(log.timestamp).toLocaleString()}
+                  <td className="whitespace-nowrap px-5 py-3.5 text-right text-gray-500">
+                    {formatManila(log.timestamp)}
                   </td>
                 </tr>
               ))

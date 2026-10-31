@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import FieldError from "../components/FieldError.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
+import { hasErrors, serverErrors, validateEmail } from "../utils/validation.js";
 import ustpLogo from "../assets/1.png";
 
 const MAIL_ICON = (
@@ -50,23 +52,36 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setErrorMessage("");
+    const found = {
+      email: validateEmail(email),
+      password: password ? null : "Password is required.",
+    };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
+
     setIsSubmitting(true);
     try {
-      const user = await login(email, password);
+      const user = await login(email.trim(), password);
       if (!["superadmin", "office_admin"].includes(user.role)) {
+        // Don't leave a student's session behind in the dashboard.
+        await logout();
         setErrorMessage("This account is not authorized to access the admin dashboard.");
         return;
       }
       navigate("/tickets");
     } catch (error) {
-      setErrorMessage(error.response?.data?.message || "Invalid email or password.");
+      // The reason (wrong password, deactivated, rate limited) is in
+      // non_field_errors or message - not the generic validation text.
+      const { general } = serverErrors(error, "Can't reach ChatDesk right now. Please try again.");
+      setErrorMessage(general ?? "Invalid email or password.");
     } finally {
       setIsSubmitting(false);
     }
@@ -151,9 +166,13 @@ export default function AdminLogin() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   required
-                  className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm text-navy placeholder:text-gray-400 transition-colors duration-150 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/30"
+                  aria-invalid={Boolean(fieldErrors.email)}
+                  className={`w-full rounded-xl border bg-white py-2.5 pl-10 pr-4 text-sm text-navy placeholder:text-gray-400 transition-colors duration-150 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/30 ${
+                    fieldErrors.email ? "border-red-400" : "border-gray-200"
+                  }`}
                 />
               </div>
+              <FieldError message={fieldErrors.email} />
             </div>
 
             <div>
@@ -182,7 +201,10 @@ export default function AdminLogin() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   required
-                  className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-10 pr-11 text-sm text-navy placeholder:text-gray-400 transition-colors duration-150 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/30"
+                  aria-invalid={Boolean(fieldErrors.password)}
+                  className={`w-full rounded-xl border bg-white py-2.5 pl-10 pr-11 text-sm text-navy placeholder:text-gray-400 transition-colors duration-150 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/30 ${
+                    fieldErrors.password ? "border-red-400" : "border-gray-200"
+                  }`}
                 />
                 <button
                   type="button"
@@ -195,6 +217,7 @@ export default function AdminLogin() {
                   </svg>
                 </button>
               </div>
+              <FieldError message={fieldErrors.password} />
             </div>
 
             {errorMessage && (

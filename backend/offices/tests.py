@@ -65,3 +65,32 @@ class OfficelessOfficeAdminTests(BaseAPITestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Faq.objects.filter(intent_keyword="sneaky").exists())
+
+
+class OfficeCodeTests(BaseAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.superadmin = self.client_for(self.make_user("super@example.com", role=User.Role.SUPERADMIN))
+
+    def test_suggested_codes_from_names(self):
+        from .codes import suggest_code
+
+        self.assertEqual(suggest_code("Office of Student Affairs (OSA)"), "OSA")
+        self.assertEqual(suggest_code("ARCU"), "ARCU")
+        self.assertEqual(suggest_code("Registrar"), "REG")
+        self.assertEqual(suggest_code("Guidance & Counseling Services"), "GCS")
+
+    def test_blank_code_is_generated_and_kept_unique(self):
+        first = self.superadmin.post("/api/v1/offices/", {"name": "Test Cashier Desk"}, format="json")
+        second = self.superadmin.post("/api/v1/offices/", {"name": "Test Clinic Desk", "code": ""}, format="json")
+        self.assertEqual(first.data["code"], "TCD")
+        self.assertEqual(second.data["code"], "TCD2")
+
+    def test_code_is_uppercased_and_validated(self):
+        ok = self.superadmin.post("/api/v1/offices/", {"name": "Test Library", "code": "lib"}, format="json")
+        self.assertEqual(ok.data["code"], "LIB")
+        for bad in ("L", "LIB RARY", "TOOLONGCODE1"):
+            response = self.superadmin.post("/api/v1/offices/", {"name": f"Test {bad}", "code": bad}, format="json")
+            self.assertEqual(response.status_code, 400, bad)
+        duplicate = self.superadmin.post("/api/v1/offices/", {"name": "Test Library 2", "code": "LIB"}, format="json")
+        self.assertEqual(duplicate.status_code, 400)

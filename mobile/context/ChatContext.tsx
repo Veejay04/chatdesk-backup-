@@ -15,6 +15,10 @@ export type ChatMessage = {
   // Set when this reply created a ticket or pointed to an already-open one.
   ticketId?: number;
   ticketTitle?: string;
+  ticketCode?: string;
+  // True when the ticket is just the record of a ChatDesk answer (not with
+  // staff) - the student can still ask for staff follow-up on it.
+  ticketAiResolved?: boolean;
   // FAQ questions offered when the bot asks the student to clarify.
   suggestions?: string[];
 };
@@ -46,6 +50,7 @@ type ChatContextValue = {
   setSelectedOffice: (office: Office | null) => void;
   sendMessage: (text: string) => Promise<void>;
   submitFeedback: (logId: number, feedback: "up" | "down") => Promise<void>;
+  requestStaffFollowUp: (ticketId: number) => Promise<boolean>;
   startNewChat: () => void;
   resumeSession: (sessionId: string) => void;
 };
@@ -128,7 +133,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           logId: data.log_id,
           feedback: null,
           canRate: Boolean(data.is_answer),
-          ...(data.ticket_id ? { ticketId: data.ticket_id, ticketTitle: data.ticket_title } : {}),
+          ...(data.ticket_id
+            ? {
+                ticketId: data.ticket_id,
+                ticketTitle: data.ticket_title,
+                ticketCode: data.ticket_code,
+                ticketAiResolved: Boolean(data.ticket_ai_resolved),
+              }
+            : {}),
           ...(data.suggested_questions?.length ? { suggestions: data.suggested_questions } : {}),
         },
       ]);
@@ -147,6 +159,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSending(false);
     }
+  };
+
+  // "I still need help" on a ChatDesk answer: reopens that answer's ticket
+  // for OSA staff (same ticket code), right from the chat.
+  const requestStaffFollowUp = async (ticketId: number) => {
+    try {
+      await axiosClient.post(`/tickets/${ticketId}/follow-up/`);
+    } catch (error: any) {
+      // Already with staff (e.g. requested from the Tickets tab) - fine.
+      if (error.response?.status !== 400) return false;
+    }
+    setMessages((prev) =>
+      prev.map((m) => (m.ticketId === ticketId ? { ...m, ticketAiResolved: false } : m))
+    );
+    return true;
   };
 
   const submitFeedback = async (logId: number, feedback: "up" | "down") => {
@@ -206,6 +233,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setSelectedOffice,
         sendMessage,
         submitFeedback,
+        requestStaffFollowUp,
         startNewChat,
         resumeSession,
       }}

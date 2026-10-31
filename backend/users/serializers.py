@@ -14,9 +14,34 @@ from offices.models import Office
 
 from .models import User
 from .services import send_verification_email
+from .validators import validate_person_name, validate_school_id
 
 PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024
 PROFILE_PICTURE_MAX_SIDE = 512
+
+
+class PersonNameMixin:
+    """first_name/last_name must contain letters - not blank, digits or symbols."""
+
+    def validate_first_name(self, value):
+        return validate_person_name(value)
+
+    def validate_last_name(self, value):
+        return validate_person_name(value)
+
+
+def _check_password_rules(attrs, password_field="password"):
+    """Full Django password rules (common, all-numeric, too similar to the
+    name/email), as a field error on `password_field`."""
+    candidate = User(
+        email=attrs.get("email", ""),
+        first_name=attrs.get("first_name", ""),
+        last_name=attrs.get("last_name", ""),
+    )
+    try:
+        validate_password(attrs[password_field], user=candidate)
+    except DjangoValidationError as error:
+        raise serializers.ValidationError({password_field: list(error.messages)})
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -53,7 +78,7 @@ def _tokens_for_user(user):
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(PersonNameMixin, serializers.ModelSerializer):
     """
     POST /api/v1/auth/register/ - public, student accounts only.
     Admin accounts are created manually via `manage.py createsuperuser`.
@@ -79,7 +104,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate_school_id(self, value):
-        value = value.strip()
+        value = validate_school_id(value)
         if User.objects.filter(school_id__iexact=value).exists():
             raise serializers.ValidationError("An account with this School ID already exists.")
         return value
@@ -87,15 +112,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         # Same rules password reset already enforces (common, all-numeric,
         # too similar to the name/email) - not just the 8-character minimum.
-        candidate = User(
-            email=attrs.get("email", ""),
-            first_name=attrs.get("first_name", ""),
-            last_name=attrs.get("last_name", ""),
-        )
-        try:
-            validate_password(attrs["password"], user=candidate)
-        except DjangoValidationError as error:
-            raise serializers.ValidationError({"password": list(error.messages)})
+        _check_password_rules(attrs)
         return attrs
 
     def create(self, validated_data):
@@ -201,7 +218,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         return value
 
 
-class UserSelfUpdateSerializer(serializers.ModelSerializer):
+class UserSelfUpdateSerializer(PersonNameMixin, serializers.ModelSerializer):
     """PATCH /api/v1/auth/me/ - any authenticated user editing their own
     profile. Deliberately narrow: first_name/last_name/profile_picture are
     editable here. role, email, is_active, and school_id all stay
@@ -228,7 +245,7 @@ class UserSelfUpdateSerializer(serializers.ModelSerializer):
         return ContentFile(buffer.getvalue(), name=f"{base_name}.jpg")
 
 
-class UserAdminUpdateSerializer(serializers.ModelSerializer):
+class UserAdminUpdateSerializer(PersonNameMixin, serializers.ModelSerializer):
     """PATCH /api/v1/users/{id}/ - admin only. Role/status/profile edits;
     email and password are out of scope here (see users/views.py for the
     self-protection guards against locking the acting admin out)."""
@@ -240,6 +257,15 @@ class UserAdminUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["first_name", "last_name", "role", "course", "school_id", "is_active", "office"]
+
+    def validate_school_id(self, value):
+        if not value:
+            return None
+        value = validate_school_id(value)
+        taken = User.objects.filter(school_id__iexact=value).exclude(pk=self.instance.pk if self.instance else None)
+        if taken.exists():
+            raise serializers.ValidationError("An account with this School ID already exists.")
+        return value
 
     def validate(self, attrs):
         role = attrs.get("role", self.instance.role if self.instance else User.Role.STUDENT)
@@ -255,7 +281,7 @@ class UserAdminUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class UserCreateSerializer(serializers.ModelSerializer):
+class UserCreateSerializer(PersonNameMixin, serializers.ModelSerializer):
     """POST /api/v1/users/ - admin only. Unlike self-registration, the admin
     picks the role directly (student, office_admin, or superadmin)."""
 
@@ -277,13 +303,14 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     def validate_school_id(self, value):
         if not value:
-            return value
-        value = value.strip()
+            return None
+        value = validate_school_id(value)
         if User.objects.filter(school_id__iexact=value).exists():
             raise serializers.ValidationError("An account with this School ID already exists.")
         return value
 
     def validate(self, attrs):
+        _check_password_rules(attrs)
         if attrs.get("role") == User.Role.OFFICE_ADMIN and not attrs.get("office"):
             raise serializers.ValidationError(
                 {"office": "An office must be assigned for the Office Admin role."}

@@ -167,7 +167,7 @@ def _normalize_question(text: str) -> str:
 
 
 def _faq_result(faq) -> dict:
-    return {"detected_intent": faq.intent_keyword, "reply": faq.answer_content}
+    return {"detected_intent": faq.intent_keyword, "reply": faq.answer_content, "faq": faq}
 
 
 def _clarification_result(faqs_by_keyword, keywords) -> dict:

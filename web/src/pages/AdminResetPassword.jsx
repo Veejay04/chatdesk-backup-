@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { confirmPasswordReset, requestPasswordReset } from "../api/auth.js";
+import FieldError from "../components/FieldError.jsx";
+import { hasErrors, serverErrors, validateEmail, validateNewPassword } from "../utils/validation.js";
 import ustpLogo from "../assets/1.png";
 
 export default function AdminResetPassword() {
@@ -11,12 +13,16 @@ export default function AdminResetPassword() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
 
   const handleRequestCode = async (event) => {
     event.preventDefault();
     setErrorMessage("");
+    const found = { email: validateEmail(email) };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
     setIsSubmitting(true);
     try {
       const { data } = await requestPasswordReset(email);
@@ -40,18 +46,21 @@ export default function AdminResetPassword() {
   const handleConfirmReset = async (event) => {
     event.preventDefault();
     setErrorMessage("");
-    if (newPassword !== confirmPassword) {
-      setErrorMessage("Passwords do not match.");
-      return;
-    }
+    const found = {
+      code: /^\d{6}$/.test(code.trim()) ? null : "Enter the 6-digit code from your email.",
+      new_password: validateNewPassword(newPassword),
+      confirm_password: newPassword === confirmPassword ? null : "Passwords do not match.",
+    };
+    setFieldErrors(found);
+    if (hasErrors(found)) return;
     setIsSubmitting(true);
     try {
-      await confirmPasswordReset(email, code, newPassword);
+      await confirmPasswordReset(email, code.trim(), newPassword);
       navigate("/login", { state: { resetSuccess: true } });
     } catch (error) {
-      const details = error.response?.data?.details;
-      const firstDetail = details ? Object.values(details)[0]?.[0] : null;
-      setErrorMessage(firstDetail || error.response?.data?.message || "Unable to reset password right now.");
+      const { fields, general } = serverErrors(error, "Unable to reset password right now.");
+      setFieldErrors(fields);
+      setErrorMessage(general ?? "");
     } finally {
       setIsSubmitting(false);
     }
@@ -80,17 +89,19 @@ export default function AdminResetPassword() {
           </p>
 
           {step === "request" ? (
-            <form onSubmit={handleRequestCode} className="space-y-5">
+            <form onSubmit={handleRequestCode} noValidate className="space-y-5">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy">Email</label>
+                <label htmlFor="reset-email" className="mb-1.5 block text-sm font-medium text-navy">Email</label>
                 <input
+                  id="reset-email"
                   type="email"
                   placeholder="you@ustp.edu.ph"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  required
-                  className="w-full border-b-2 border-gray-200 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none"
+                  aria-invalid={Boolean(fieldErrors.email)}
+                  className={`w-full border-b-2 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none ${fieldErrors.email ? "border-red-400" : "border-gray-200"}`}
                 />
+                <FieldError message={fieldErrors.email} />
               </div>
 
               {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
@@ -104,45 +115,51 @@ export default function AdminResetPassword() {
               </button>
             </form>
           ) : (
-            <form onSubmit={handleConfirmReset} className="space-y-5">
+            <form onSubmit={handleConfirmReset} noValidate className="space-y-5">
               {infoMessage && <p className="text-sm text-navy/70">{infoMessage}</p>}
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy">6-digit code</label>
+                <label htmlFor="reset-code" className="mb-1.5 block text-sm font-medium text-navy">6-digit code</label>
                 <input
+                  id="reset-code"
                   type="text"
                   inputMode="numeric"
                   maxLength={6}
                   placeholder="123456"
                   value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  required
-                  className="w-full border-b-2 border-gray-200 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none"
+                  onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
+                  aria-invalid={Boolean(fieldErrors.code)}
+                  className={`w-full border-b-2 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none ${fieldErrors.code ? "border-red-400" : "border-gray-200"}`}
                 />
+                <FieldError message={fieldErrors.code} />
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy">New password</label>
+                <label htmlFor="reset-new-password" className="mb-1.5 block text-sm font-medium text-navy">New password</label>
                 <input
+                  id="reset-new-password"
                   type="password"
                   placeholder="••••••••"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
-                  required
-                  className="w-full border-b-2 border-gray-200 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none"
+                  aria-invalid={Boolean(fieldErrors.new_password)}
+                  className={`w-full border-b-2 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none ${fieldErrors.new_password ? "border-red-400" : "border-gray-200"}`}
                 />
+                <FieldError message={fieldErrors.new_password} />
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy">Confirm new password</label>
+                <label htmlFor="reset-confirm-password" className="mb-1.5 block text-sm font-medium text-navy">Confirm new password</label>
                 <input
+                  id="reset-confirm-password"
                   type="password"
                   placeholder="••••••••"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
-                  required
-                  className="w-full border-b-2 border-gray-200 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none"
+                  aria-invalid={Boolean(fieldErrors.confirm_password)}
+                  className={`w-full border-b-2 bg-transparent py-2 text-base text-navy placeholder:text-gray-300 focus:border-gold focus:outline-none ${fieldErrors.confirm_password ? "border-red-400" : "border-gray-200"}`}
                 />
+                <FieldError message={fieldErrors.confirm_password} />
               </div>
 
               {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}

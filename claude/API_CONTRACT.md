@@ -191,6 +191,12 @@ POST,/api/v1/users/,"Create a student or admin account directly (admin picks the
 GET,/api/v1/users/{user_id}/,Detail view.
 PATCH,/api/v1/users/{user_id}/,"Edit first_name/last_name/role/course/school_id/is_active. An admin cannot deactivate or demote their own account (403)."
 DELETE,/api/v1/users/{user_id}/,"Remove an account. An admin cannot delete their own account (403)."
+GET,/api/v1/colleges/,"Any authenticated user. Colleges and their course codes, for college filters (not paginated): [{ ""key"": ""it_computing"", ""name"": ""Information Technology & Computing"", ""courses"": [{ ""code"": ""BSIT"", ""name"": ""BS Information Technology"" }] }]"
+# Input rules (register, PATCH /auth/me/, admin create/edit - 400 under the field):
+# - first_name / last_name: must contain letters, max 150.
+# - school_id: 6-20 digits, hyphens allowed, starts and ends with a digit
+#   (e.g. 2023304440 or 2026-00006); unique.
+# - password (register + admin create): full password rules, as in register.
 
 ## FAQ (Knowledge Base)
 {
@@ -216,7 +222,9 @@ DELETE,/api/v1/faqs/{faq_id}/,admin,Remove obsolete FAQ.
 # Validation on create/edit: answer_content must be at least 15 characters
 # (students see it word for word - no placeholders like "OSA ONLY"), and
 # question_text/answer_content must not contain the broken character "�"
-# (usually from copy-pasting). Both return 400 under the field name.
+# (usually from copy-pasting). intent_keyword: 2-100 letters, numbers or
+# underscores, no spaces. question_text: max 300. All return 400 under the
+# field name.
 
 ## Chat Interaction & Inquiry Logging
 This handles the core AI interaction. The frontend posts a message, the backend hits the OpenAI API, logs the interaction in tbl_inquiry_logs, and returns the response.
@@ -245,8 +253,17 @@ Response 200 (Successful AI Resolution):
   "reply": "To apply for the academic scholarship, you must submit your Certificate of Registration...",
   "is_escalated": false,
   "is_answer": true,
-  "suggested_questions": []
+  "suggested_questions": [],
+  "ticket_id": 889,
+  "ticket_code": "OSA103126004",
+  "ticket_title": "What are the requirements for the academic scholarship?",
+  "ticket_ai_resolved": true
 }
+# Every real question gets a ticket. An FAQ answer is recorded as a ticket
+# already resolved by the AI (ticket_ai_resolved: true) - it is NOT in the
+# staff queue; the student can ask for staff follow-up on it (see
+# POST /tickets/{ticket_id}/follow-up/). Greetings, gibberish, off-topic and
+# clarification prompts create no ticket.
 Response 201 (AI Failed, Ticket Escalation Triggered):
 {
   "log_id": 5043,
@@ -256,7 +273,9 @@ Response 201 (AI Failed, Ticket Escalation Triggered):
   "is_answer": false,
   "suggested_questions": [],
   "ticket_id": 890,
-  "ticket_title": "Late Enrollment Fee Waiver"
+  "ticket_code": "GEN103126001",
+  "ticket_title": "Late Enrollment Fee Waiver",
+  "ticket_ai_resolved": false
 }
 # detected_intent is an FAQ's intent_keyword when answered, otherwise one of:
 #   conversational        - greeting/thanks/"is that all?" - short fixed reply, no ticket
@@ -266,7 +285,7 @@ Response 201 (AI Failed, Ticket Escalation Triggered):
 #   unclear               - gibberish - asks to rephrase, no ticket
 #   unresolved_complex_query - new ticket created (201)
 #   duplicate_ticket      - same concern as one of the student's open tickets (200);
-#                           no new ticket, ticket_id/ticket_title point to the existing one
+#                           no new ticket, ticket_id/ticket_code/ticket_title point to the existing one
 # is_answer: true only for FAQ answers - the only replies that can be rated.
 
 ### PATCH /api/v1/chat/logs/{log_id}/feedback/
@@ -283,12 +302,24 @@ Admin only. Returns raw logs for system analytics.
   "detected_intent": "scholarship_requirements",
   "chatbot_response": "To apply for the academic scholarship...",
   "is_escalated": false,
+  "office": 3,
+  "office_name": "Office of Student Affairs (OSA)",
+  "student_college": "Information Technology & Computing",
+  "ticket_code": "OSA103126004",
+  "feedback": null,
   "timestamp": "2026-06-15T10:15:00Z"
 }
+# Filters: ?intent=, ?user_id=, ?is_escalated=, ?date_from=, ?date_to=,
+# ?college=<key from /colleges/>, and (Super Admin) ?office=<id> or
+# ?office=unassigned. ticket_code is null for logs without a ticket.
 ## Ticket Escalation
 {
   "ticket_id": 890,
+  "ticket_code": "GEN103126001",
   "user_id": 1,
+  "user_email": "student@gmail.com",
+  "student_course": "BSIT",
+  "student_college": "Information Technology & Computing",
   "resolved_by": null,
   "log_id": 5043,
   "title": "Late Enrollment Fee Waiver",
@@ -297,9 +328,21 @@ Admin only. Returns raw logs for system analytics.
   "conversation_context": "Student: hi\nChatDesk: Hi! I can help with...\nStudent: Paano ko ma-waive...",
   "status": "pending",
   "resolution": null,
+  "is_ai_resolved": false,
   "created_at": "2026-06-15T10:16:00Z",
+  "reopened_at": null,
   "resolved_at": null
 }
+# ticket_code: office code + Manila date (MMDDYY) + that office's 3-digit
+# number for the day, e.g. OSA103126001 = OSA's first ticket on Oct 31, 2026.
+# "GEN" when the ticket has no office yet. Set once on creation and never
+# changes, even if the ticket is rerouted. Unique.
+# is_ai_resolved: true for the record of a question the chatbot answered from
+# an FAQ (created already resolved, issue_description ends "- Answered by
+# ChatDesk.", resolution = the FAQ answer). It becomes false once a student
+# asks for follow-up or staff reply to it.
+# reopened_at: when the student asked for staff follow-up on an AI-answered
+# ticket; staff resolution time is measured from here (otherwise created_at).
 # resolution: the admin's written answer, set via PATCH alongside status. Null
 # until an admin responds. Not on the original ERD - added post-Sprint-1-
 # baseline to fulfill the "add resolution notes" PATCH behavior already
@@ -311,16 +354,18 @@ Admin only. Returns raw logs for system analytics.
 # original ERD - flagged for the next ERD revision.
 
 Method,Path,Roles,Notes
-GET,/api/v1/tickets/,admin,"List all tickets, supports ?status=, ?category= and ?search= (matches issue_description or title) filters."
-GET,/api/v1/tickets/?creator=me,student,Student's own escalated tickets.
+GET,/api/v1/tickets/,admin,"List tickets. ?status=, ?category=, ?source=staff|ai (staff = needs/needed a person, ai = chatbot-answered), ?college=<key>, ?search= (title, question or ticket code), and (Super Admin) ?office=<id> or ?office=unassigned."
+GET,/api/v1/tickets/,student,"Student's own tickets (staff and chatbot-answered). ?source=staff|ai."
 POST,/api/v1/tickets/,student,Manual ticket creation (if student bypasses AI).
 GET,/api/v1/tickets/{ticket_id}/,all,Detail view (students can only view their own).
-PATCH,/api/v1/tickets/{ticket_id}/,admin,"Update ticket status, title, subject_category, or add resolution notes (resolved_by/resolved_at are set automatically on resolve)."
+PATCH,/api/v1/tickets/{ticket_id}/,admin,"Update ticket status, title, subject_category, or add resolution notes (resolved_by/resolved_at are set automatically on resolve). Resolving requires a non-empty resolution (400 under details.resolution); resolution max 5000. Replying to an AI-answered ticket moves it to staff (is_ai_resolved becomes false)."
+POST,/api/v1/tickets/{ticket_id}/follow-up/,student,"""I still need help"" on an AI-answered ticket (own tickets only - others 404). Optional { ""message"": ""..."" } (max 1000). Reopens it as pending for staff with the same ticket_code, sets reopened_at, moves the chatbot's answer into conversation_context. 400 if the ticket is already with staff. Returns the ticket."
 
 ## Analytics (Admin Dashboard)
 
 ### GET /api/v1/analytics/overview/
-Admin only. Optional ?date_from=, ?date_to= (YYYY-MM-DD) to scope the range.
+Admin only. Optional ?date_from=, ?date_to= (YYYY-MM-DD), ?college=<key>, and
+(Super Admin) ?office=<id> or ?office=unassigned.
 {
   "total_inquiries": 128,
   "total_escalations": 34,
@@ -337,17 +382,45 @@ Admin only. Optional ?date_from=, ?date_to= (YYYY-MM-DD) to scope the range.
     { "intent": "unclear", "count": 3 },
     { "intent": "duplicate_ticket", "count": 1 }
   ],
-  "tickets_by_status": { "pending": 5, "active": 3, "resolved": 26 }
+  "tickets_by_status": { "pending": 5, "active": 3, "resolved": 26 },
+  "ai_answered_tickets": 94,
+  "avg_resolution_seconds": 183600,
+  "offices": [
+    {
+      "office_id": 5,
+      "office_name": "Office of Student Affairs (OSA)",
+      "office_code": "OSA",
+      "pending": 4,
+      "active": 1,
+      "resolved": 12,
+      "ai_answered": 40,
+      "oldest_pending_at": "2026-10-27T09:15:00Z",
+      "oldest_pending_code": "OSA102726002",
+      "avg_resolution_seconds": 97200
+    }
+  ]
 }
 # total_inquiries / total_escalations / intent_frequencies count only real
 # questions (FAQ answers + escalations). Small talk, clarification prompts,
 # off-topic, gibberish and repeats of an open ticket are in other_interactions;
 # total_messages counts everything.
+# tickets_by_status, resolution_rate and avg_resolution_seconds cover staff
+# tickets only; chatbot-answered tickets are counted in ai_answered_tickets.
+# offices: one row per office (plus an "Unassigned" row with office_id null
+# when it has tickets), most pending work first; Office Admins get only their
+# own office. Resolution times are from reopened_at (if any) or created_at.
 
 ## Other endpoint behavior notes
+- Offices have a "code" (2-10 uppercase letters/numbers, unique) that starts
+  their ticket codes. Optional on create/edit - left blank, one is generated
+  from the name (e.g. "Registrar" -> REG). Changing it doesn't change
+  existing ticket codes.
 - DELETE /api/v1/offices/{office_id}/ returns 400 (with a message) while the
   office still has Office Admin accounts - reassign them first. An Office Admin
   with no office gets 403 / empty results everywhere.
+- Announcements: title and content required (not blank), content max 5000.
+  Phases: name required (max 100), guidance_message max 500, at most 5
+  suggested_questions of up to 200 characters each.
 - Phases may overlap. GET /api/v1/phases/current/ uses today's Manila date and,
   when several phases are active, returns the most recently started one (the
   shorter one on a tie).
